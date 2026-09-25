@@ -1,0 +1,33 @@
+# LLM Manager — nginx site config (v2, TLS)
+# Port 80: healthz stays plain (probe-friendly); everything else redirects to HTTPS.
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+    location /healthz { proxy_pass http://127.0.0.1:8001; }
+    location / { return 308 https://$host$request_uri; }
+}
+
+# Port 443 (TLS): full routing — app on :8001, LiteLLM on :4000.
+server {
+    listen 443 ssl default_server;
+    listen [::]:443 ssl default_server;
+    server_name llm-manager.marion-ia-usa.internal 10.0.20.108;
+
+    ssl_certificate     /etc/llm-manager/tls/llm-manager.crt;
+    ssl_certificate_key /etc/llm-manager/tls/llm-manager.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location /healthz { proxy_pass http://127.0.0.1:8001; }
+    location /api/    { proxy_pass http://127.0.0.1:8001; }
+    location /admin   { proxy_pass http://127.0.0.1:8001; }
+    location /login   { proxy_pass http://127.0.0.1:8001; }
+    location /logout  { proxy_pass http://127.0.0.1:8001; }
+    location /ui      { proxy_pass http://127.0.0.1:4000; }
+    location /agents/ { proxy_pass http://127.0.0.1:8200; proxy_read_timeout 300s; }
+    location = /agents { return 302 /agents/ui; }
+    location = /v1/models { proxy_pass http://127.0.0.1:8001; proxy_read_timeout 30s; }
+    location /v1      { proxy_pass http://127.0.0.1:4000; proxy_read_timeout 900s; proxy_buffering off; }
+    location /key/    { proxy_pass http://127.0.0.1:4000; }
+    location /        { return 302 /admin; }
+}

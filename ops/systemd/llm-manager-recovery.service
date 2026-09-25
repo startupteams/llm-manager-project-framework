@@ -1,0 +1,14 @@
+[Unit]
+Description=LLM Manager v0.11 recovery engine (desired-state + registry sync)
+After=llm-manager-web.service
+Wants=llm-manager-web.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/llm-manager/app
+ExecStart=/opt/llm-manager/venv/bin/python3 /opt/llm-manager/app/v011_recovery.py
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

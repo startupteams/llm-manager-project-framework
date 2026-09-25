@@ -30,6 +30,11 @@ LLM Manager is intended to provide:
 | `docs/BUSINESS_CONTEXT.md` | Business motivation, users, and operating principles. |
 | `docs/OPERATIONS_AND_USAGE.md` | How humans and agents should use the current service safely. |
 | `docs/IMPLEMENTATION_STATUS.md` | What is implemented, partial, unimplemented, and limited today. |
+| `docs/DEVELOPER_SETUP.md` | Developer/build/setup commands and the repo-to-deployment map. |
+| `service/` | Captured deployed source (2026-09-25): `app/` web shell + core + recovery, `collectors/`, `control/` allowlisted PVE shim. |
+| `ops/` | Captured sanitized operations configs: systemd units, nginx site, LiteLLM config/env names. |
+| `config/examples/` | Requirements freeze from the deployed venv (reproducibility reference). |
+| `db/schema/schema.sql` | Schema-only database reference (no row data). |
 | `docs/ACMS_INTEGRATION.md` | Intended ACMS <-> LLM Manager boundary and future interface. |
 | `docs/MODEL_SERVING_AND_BENCHMARKING.md` | Model-serving, benchmarking, history, and rollback intent. |
 | `docs/adr/` | Human-visible significant architecture decisions. |

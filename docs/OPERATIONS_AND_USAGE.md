@@ -17,20 +17,28 @@ Do not use it as the project/task/context system of record.
 
 ## Verified current API surfaces from the 2026-09 deployment
 
-The deployed service has included:
+Captured directly from `service/app/main.py` on 2026-09-25 (web shell on 127.0.0.1:8001, fronted by nginx). Grouped surface:
 
 ```text
-GET /healthz
-GET /v1/models
-GET /api/history/revisions
-GET /api/history/revisions?include_failed=true
-POST /api/history/revisions
-GET /api/history/benchmarks
-POST /api/history/benchmarks
+GET  /healthz                      GET  /admin, /login, /logout (LDAP/LLDAP session)
+GET  /v1/models                    (OpenAI-compatible inventory via routing layer)
+
+GET  /api/status                   GET  /api/power, /api/facility, /api/cost
+GET  /api/spend, /api/spend/summary, /api/spend/analytics
+GET  /api/deployments              GET  /api/deployments/{ip}/logs
+POST /api/deployments/{ip}/restart POST /api/deployments/{ip}/unit
+GET  /api/hosts/{ip}/presets       POST /api/hosts/{ip}/presets
+POST /api/hosts/{ip}/presets/{pid}/use|rename|delete/reorder
+GET  /api/history/revisions        POST /api/history/revisions
+GET  /api/history/benchmarks       POST /api/history/benchmarks
 POST /api/history/revisions/{revision_id}/status
+GET  /api/keys                     POST /api/keys/issue|block|delete
+GET  /api/openrouter               POST /api/openrouter
+GET  /api/rdma/ring                POST /api/rdma/ring
+POST /api/rdma/ring/{host}/toggle  GET  /api/rdma/deployments
 ```
 
-Other management endpoints exist in the deployed application and must be discovered from the live application/OpenAPI/source before automation relies on them. Do not invent endpoint paths from old notes.
+The authoritative surface is the captured source (`service/app/main.py`); do not invent endpoint paths from old notes.
 
 ## Safe model-change workflow
 
@@ -48,7 +56,12 @@ Other management endpoints exist in the deployed application and must be discove
 
 ## Recovery-state warning
 
-The deployed recovery engine has historically considered both service state and VM/power state. Setting only a service-level maintenance flag has not always prevented VM restart recovery. Before intentionally stopping a VM, verify both the service and power desired states used by the current recovery engine.
+The deployed recovery engine has **two independent triggers** (verified against source and live behavior, corrected 2026-09-25):
+
+1. `desired_service_state='MAINTENANCE'` gates only the HTTP-probe restart path.
+2. `desired_power_state` drives the outage path: a VM whose observed power state deviates from desired fires `outage_detected → recovery_vm_start`. **`STOPPED` is NOT a safe planned-stop value** — it still counts as an outage and the engine powers the VM back on (~60 s). Only `desired_power_state='STOPPED_INTENTIONAL'` takes the leave-it-off path (see `service/app/v011_recovery.py`, `tick()`).
+
+For planned stops: set `desired_power_state='STOPPED_INTENTIONAL'` (and service state `MAINTENANCE` where relevant), restore both afterward.
 
 This behavior is technical debt and should be replaced by a unified maintenance transaction/state.
 

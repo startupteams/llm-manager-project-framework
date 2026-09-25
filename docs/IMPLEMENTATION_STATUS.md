@@ -1,16 +1,31 @@
 # Implementation Status and Known Limitations
 
-**Snapshot basis:** September 2026 handoffs and design discussions. This file is descriptive, not the live source of truth. Verify the running system before operating it.
+**Snapshot basis:** September 2026 handoffs, design discussions, and the 2026-09-25 code capture of the deployed service on VM114 (`service/`, `ops/`, `db/schema/` in this repo). This file is descriptive, not the live source of truth. Verify the running system before operating it.
 
 ## Implemented / observed in the current deployment
+
+### Deployed components (from captured systemd units)
+
+| Unit | Process | Bind |
+|---|---|---|
+| `llm-manager-web.service` | `uvicorn main:app --workers 2` (FastAPI web shell + API) | 127.0.0.1:8001 |
+| `litellm.service` | LiteLLM proxy gateway (`/etc/llm-manager/litellm_config.yaml`, auto-generated) | 127.0.0.1:4000 |
+| AgentManager (served under `/agents/`) | agent provisioning/chat UI on :8200 | 127.0.0.1:8200 |
+| `llm-manager-recovery.service` | `v011_recovery.py` — desired-state engine + `sync_registry` tick | — |
+| `llm-manager-collector.service` | `gpu_power_collector.py` (GPU_SAMPLE_SECONDS=20) | — |
+| `llm-manager-emporia.service` | `emporia_adapter.py --loop` (facility power) | — |
+
+nginx fronts everything: `:80 /healthz` plain + redirect, `:443` TLS with routes to web (8001), LiteLLM `/v1`+`/ui`+`/key/` (4000), and `/agents/` (8200).
 
 ### Core service and routing
 
 - LLM Manager is deployed on VM114 in MARION-IA-USA.
-- Service health is exposed through `/healthz`.
+- Service health is exposed through `/healthz` (on the web shell, port 8001, proxied by nginx).
 - OpenAI-compatible model inventory/routing is exposed through `/v1/models` via the manager/routing layer.
 - Local vLLM endpoints, llama.cpp endpoints, and cloud/provider-backed routes have all been managed through the service.
-- A recovery/control subsystem tracks desired state and can attempt service/VM recovery.
+- A recovery/control subsystem (`v011_recovery.py`) tracks desired state and can attempt service/VM recovery; it also runs `sync_registry()` which owns model-registry rows and the `fast`/`code`/`frontier` alias repointing.
+- Proxmox control is an allowlisted shim (`service/control/pve_ops.py`): only vm-status/vm-start/vm-shutdown/vm-reboot against a fixed IP→(node,vmid) map; no force-stop, no arbitrary VMID.
+- Authentication is via LLDAP (LDAP on port 3890) for the `/admin` web shell.
 
 ### Deployment history and benchmarks
 
@@ -44,14 +59,14 @@ These examples are operational evidence, not permanent product requirements.
 - ACMS-facing management API/authentication contract is not approved.
 - Configuration locking/frozen versions are not yet defined as a complete feature.
 - Automated benchmark-after-load is not yet a complete standard workflow.
-- Local/cloud cost attribution and PDU-energy integration are not yet complete.
+- Local/cloud cost attribution and PDU-energy integration are partial: GPU power sampling (`gpu_power_collector.py`, 20 s cadence) and Emporia facility collection (`emporia_adapter.py`) run as services, and the web shell serves `/api/cost`, `/api/power`, `/api/facility`, `/api/spend*` with a spend-guard module (`spend_guard.py`); a kWh-integrator gate test (`v011_cost_tests.py`) ships with the app. PDU-level per-host energy attribution remains incomplete.
 - Cross-site routing/discovery is future work.
 
 ## Known software limitations
 
 ### Recovery state has multiple triggers
 
-Maintenance has historically required coordinating both desired service state and desired VM/power state. A VM can be restarted by recovery if only one axis is suppressed.
+Maintenance requires coordinating both desired service state and desired VM/power state, and the 2026-09-25 live correction tightened this further: `desired_service_state=MAINTENANCE` gates only the HTTP-probe restart path, and `desired_power_state=STOPPED` still counts as `outage_detected` (the recovery engine will power the VM back on). Only `desired_power_state=STOPPED_INTENTIONAL` takes the leave-it-off path. For planned stops, always set `STOPPED_INTENTIONAL` (source: `service/app/v011_recovery.py` `tick()`).
 
 ### Patched model runtimes
 
