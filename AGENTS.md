@@ -1,177 +1,147 @@
-# AGENTS.md
+# AGENTS.md — LLM Manager
 
-Instructions for autonomous and semi-autonomous coding agents working in this repository.
+These instructions apply to AI agents modifying the LLM Manager repository or MARION-IA-USA LLM Manager deployment.
 
-## 1. Authority model
+## 1. Read before changing anything
 
-Humans set product intent, approve scope, approve significant decisions, and approve merges.
-
-Agents may:
-
-- inspect the repository;
-- propose a short plan;
-- implement approved requirements;
-- create or update automated tests;
-- update documentation affected by the change;
-- add newly discovered ideas to `FUTURE_WORK.md`;
-- draft ADRs and TDRs;
-- run non-destructive validation;
-- prepare commits and pull requests.
-
-Agents must not:
-
-- silently add product scope;
-- promote future work into approved requirements without human approval;
-- accept their own newly invented significant architecture decision;
-- merge their own work under the current operating model;
-- commit directly to `main`/production branches;
-- use destructive commands, rotate secrets, alter production data, change permissions, or modify infrastructure without explicit human approval;
-- hide failed validation, security concerns, or unresolved trade-offs.
-
-## 2. Read before planning
-
-For every meaningful change, read the relevant parts of:
+Read, in order:
 
 1. `README.md`
 2. `REQUIREMENTS.md`
-3. `SPRINT.md`
-4. `docs/ARCHITECTURE.md`
-5. relevant files in `docs/adr/`
-6. relevant files in `docs/tdr/`
-7. `FUTURE_WORK.md` when scope or follow-up work is involved
+3. `FUTURE_WORK.md`
+4. `SPRINT.md`
+5. `docs/ARCHITECTURE.md`
+6. `docs/IMPLEMENTATION_STATUS.md`
+7. `docs/OPERATIONS_AND_USAGE.md`
+8. relevant ADRs/TDRs
 
-Repository-local instructions and approved requirements are the primary source of truth.
+Approved requirements define scope. Future work is not authorization to implement.
 
-## 3. Requirement discipline
+## 2. Service boundary
 
-Implementation work should trace to one or more `REQ-###` entries.
+LLM Manager owns inference/runtime infrastructure concerns. ACMS owns work/project/context orchestration.
 
-Before editing, summarize:
+Do not move project requirements, Kanban/task state, persistent transcript history, human steering governance, or general ACMS context management into LLM Manager merely because an integration needs them.
 
-- the requirement IDs being implemented;
-- the acceptance criteria;
-- the files/components likely to change;
-- assumptions or ambiguities;
-- the validation that will prove the change works.
+## 3. Production safety rules
 
-If the requested work is not covered by an approved requirement, do one of the following:
+- Treat MARION-IA-USA as production infrastructure.
+- Never replace a known-working model/runtime before capturing its exact rollback configuration.
+- Put deployments into explicit maintenance before authorized manual work.
+- Recovery has historically had more than one trigger; verify both desired service state and desired power/VM state before stopping a VM.
+- Do not assume a stopped model stays stopped until recovery state is verified.
+- Never start two VMs that share the same passthrough GPU devices.
+- Avoid repeated rapid GPU-VM stop/start cycles on MIAM-00111; a known PCIe/AER/riser condition has previously required a host reboot to recover.
+- Preserve custom/patched vLLM environments. Do not `pip install -U vllm` into a known-good runtime.
+- Experimental model stacks belong in versioned paths/containers/VMs.
 
-- ask for human approval to add/modify the requirement; or
-- record the idea in `FUTURE_WORK.md` if it is not part of the current scope.
+## 4. Configuration and model truth
 
-Do not invent scope merely because it seems useful.
+The live registry and verified runtime state are authoritative for current deployments.
 
-## 4. Planning and execution
+Do not infer that an alias is local merely from its name. Verify provider/runtime/model identity.
 
-Before meaningful edits, provide a short implementation plan. Keep the plan proportional to the change.
+When documenting a model deployment, capture:
 
-During execution:
+- actual artifact/revision/checksum;
+- runtime/image/commit;
+- quantization;
+- host/VM/site;
+- context;
+- TP/PP/DP/EP and relevant runtime flags;
+- RAM/VRAM/hardware;
+- route/alias;
+- health and benchmark evidence.
 
-- work in a dedicated branch/worktree/sandbox;
-- keep the diff focused;
-- follow the existing architecture and project conventions;
-- prefer readable, conventional code over clever code;
-- avoid unrelated cleanup;
-- preserve backward compatibility unless an approved requirement or ADR says otherwise;
-- update affected documentation in the same change.
+## 5. History and rollback
 
-If the implementation grows materially beyond the approved plan, stop and surface the scope increase.
+Deployment history must make engineering work reproducible.
 
-## 5. Significant decisions and ADRs
+- `Load Configuration` is non-destructive.
+- `Restore & Serve` is a separate confirmed operation.
+- Failed experiments may be retained but hidden by default.
+- Do not delete the last known-good revision merely because a newer model works.
 
-Create or update an ADR when a change makes a significant, durable decision about architecture, major dependencies, data/storage, external integrations, security boundaries, deployment model, scalability approach, or another choice that future maintainers are likely to ask "why did we choose this?"
+## 6. Benchmark discipline
 
-### Human-directed decision
+A performance number without deployment context is misleading.
 
-If a human explicitly made the decision, the agent may record it as `Status: Accepted`. The ADR must still be called out in the pull request so the human sees what was recorded.
+Link benchmarks to exact deployment revisions and record at least:
 
-### Agent-originated decision
+- TTFT;
+- output tokens/sec per request/agent;
+- aggregate output tokens/sec;
+- concurrency;
+- prompt/output token counts;
+- tested context;
+- RAM/VRAM;
+- host/hardware/runtime;
+- errors;
+- representative Hermes/tool-use status when relevant.
 
-If the agent concludes a significant decision is needed, create a draft ADR with `Status: Proposed` and surface it for human approval. Do not treat it as approved until a human accepts it.
+When comparing models, prefer same-node tests. When comparing nodes, use the same model/configuration first so hardware effects are visible.
 
-Use `docs/adr/TEMPLATE.md`.
+## 7. Secrets and data
 
-## 6. Technical debt and TDRs
+Never commit:
 
-Create a TDR when a change intentionally leaves known technical debt such as a shortcut, workaround, temporary design, missing test, manual step, or deferred reliability/security/performance/maintainability improvement.
+- `.env` files containing secrets;
+- API keys/tokens;
+- passwords;
+- SSH/private keys;
+- production database row dumps;
+- customer-sensitive data;
+- raw logs containing credentials.
 
-Use `docs/tdr/TEMPLATE.md` and keep the record concise.
+Sanitize configuration into `.example` files. Run a secret scan before commit. If a secret appears in a tool transcript or repository candidate, stop and surface it for rotation/removal.
 
-An agent may propose a TDR, but the human reviewer should confirm that the debt is acceptable and that the owner is appropriate.
+## 8. Git workflow
 
-## 7. Validation
-
-Use the exact validation commands documented by the project once the implementation stack is selected.
-
-Run all checks relevant to the change, such as:
-
-- formatting;
-- lint/static analysis;
-- type checking where applicable;
-- unit tests;
-- integration tests;
-- end-to-end tests where applicable;
-- build/package validation;
-- security/secret/dependency checks;
-- deployment or readiness checks when relevant.
-
-Report exactly what passed, failed, or was not run. Never imply that a check passed if it was skipped or unavailable.
-
-If expected commands are not documented, surface that as an agent-readiness gap instead of guessing silently.
-
-## 8. Security and data handling
-
-- Do not commit secrets, credentials, private keys, access tokens, or sensitive customer/company data.
-- Treat generated shell commands, migrations, dependencies, and configuration changes as untrusted until reviewed.
-- Do not weaken authentication, authorization, encryption, logging, isolation, or monitoring merely to make a task easier.
-- Surface security-sensitive behavior for explicit human review.
-
-## 9. Git and pull requests
-
-Startup Teams Git policy applies unless a stricter project policy is documented.
-
-- Use a dedicated branch; direct commits to `main`/production branches are prohibited.
-- Branch format: `type/ticket-short-description` (for example, `feat/AGR-24-bnpl-checkout`).
+- Work on a dedicated branch.
+- Branch format: `type/ticket-short-description`.
 - Commit format: `type(scope): short description (#issue-id)`.
-- Commit scope is required.
-- Every commit must reference the related issue/ticket.
-- Keep commits and PRs small enough to review.
-- Required validation must pass before merge.
-- A human reviewer must approve before merge under the current operating model.
+- Do not invent an issue ID; create/use an approved issue according to repository policy.
+- Keep capture/bootstrapping changes reviewable.
+- A human must approve before merge.
 
-Every PR should state:
+## 9. ADR policy
 
-- feature / requirement IDs;
-- what changed and why;
-- files/components changed;
-- validation performed and results;
-- known risks or limitations;
-- documentation changes;
-- ADRs/TDRs added or changed;
-- future-work items discovered;
-- reviewer focus areas.
+If a human explicitly made a significant architecture decision, record it as an ADR and surface it in the PR.
 
-## 10. Stop and ask for human judgment when
+If the agent thinks a significant new decision is required, draft `Status: Proposed` and stop for human approval before treating it as accepted.
 
-- requirements conflict or are materially ambiguous;
-- a new significant ADR decision is required;
-- credentials or restricted access are required;
-- a destructive action is needed;
-- tests fail unexpectedly and the cause is not understood;
-- security-sensitive behavior changes;
-- production data or infrastructure would be changed;
-- the diff grows substantially beyond the planned scope;
-- a future-work idea would need to become approved product scope.
+## 10. TDR policy
 
-## 11. Handoff standard
+Use a TDR for intentional shortcuts, patched runtimes, manual recovery procedures, missing automation, known hardware/software limitations, or other accepted debt.
 
-At the end of a work session or before handing work to another agent/human, provide:
+## 11. Validation
 
-1. requirement IDs addressed;
-2. concise summary of changes;
-3. files changed;
-4. validation commands and results;
-5. known risks / unresolved questions;
-6. ADR/TDR status;
-7. future-work items discovered;
-8. recommended next action.
+Run the exact project validation commands once captured/documented. At minimum for a Python service, consider syntax/import checks, tests, config parsing, migration/schema verification, and API smoke tests in a safe environment.
+
+Report `Pass`, `Fail`, or `Not run` accurately. Never infer a passing test.
+
+## 12. Stop and ask for human judgment when
+
+- requirements conflict;
+- an ACMS-facing contract would be invented or materially changed;
+- a destructive production action is required outside the approved maintenance scope;
+- credentials/access are required and unavailable;
+- a security boundary changes;
+- production tests fail unexpectedly;
+- a new persistent model policy would be made without approved authority;
+- the diff expands beyond the approved capture/documentation scope.
+
+## 13. Handoff standard
+
+At completion provide:
+
+1. requirements addressed;
+2. source/code captured and source locations;
+3. files excluded and why;
+4. changes made;
+5. validation commands/results;
+6. production impact (if any);
+7. ADR/TDR status;
+8. future-work items discovered;
+9. known risks/unresolved questions;
+10. exact branch, commit, PR, and recommended next action.

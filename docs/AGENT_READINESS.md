@@ -1,86 +1,69 @@
-# Agent Readiness - Level 3 Target
+# Agent Readiness - LLM Manager Level 3 Target
 
-This repository framework targets **production-grade, Level 3-style agent readiness** without prescribing a programming language, framework, CI provider, test framework, container runtime, or deployment platform.
+LLM Manager targets production-grade agent readiness because AI agents routinely perform model/runtime/infrastructure work against a live heterogeneous environment.
 
-A blank framework cannot literally satisfy build, test, observability, or deployment signals before a product stack exists. The rule is therefore: **select the tools that best fit the product, then satisfy these capability outcomes before treating the repository as production-ready for autonomous execution.**
+## 1. Style and validation
 
-## Level 3 Readiness Gate
+- [ ] Formatting/lint/static-analysis commands are captured from the deployed codebase.
+- [ ] Type checking is defined if practical for the captured Python code.
+- [ ] Validation commands are documented in the README or developer docs.
 
-### 1. Style and Validation
+## 2. Reproducible build/runtime
 
-- [ ] Formatting conventions are defined where applicable.
-- [ ] Lint/static-analysis checks are defined where applicable.
-- [ ] Type checking is defined where the selected language/ecosystem benefits from it.
-- [ ] The validation commands are documented and quick enough for agents to run frequently.
+- [ ] Python/runtime versions are pinned/documented.
+- [ ] Dependencies are captured without copying the production venv.
+- [ ] A fresh non-production checkout can start the service using documented steps.
+- [ ] Model-specific patched runtimes are documented separately from the manager application runtime.
 
-### 2. Build System
+## 3. Testing
 
-- [ ] Setup/build commands are deterministic and documented.
-- [ ] Dependencies and runtime versions are reproducible/pinned appropriately for the selected stack.
-- [ ] A fresh checkout can be made runnable using documented steps.
-- [ ] Build failures produce actionable diagnostics.
+- [ ] Unit tests cover pure management logic.
+- [ ] Integration tests cover database/history/routing/control behavior using non-production fixtures.
+- [ ] Recovery/maintenance tests cover both desired service and desired power state.
+- [ ] History/load/restore tests exist.
+- [ ] API smoke tests cover `/healthz`, model inventory, history, and benchmark surfaces.
 
-### 3. Testing
+## 4. Documentation
 
-- [ ] Automated tests cover core behavior.
-- [ ] Integration tests exist where integration risk warrants them.
-- [ ] End-to-end tests cover critical user journeys where applicable.
-- [ ] Tests can run without unsafe dependence on production systems/data.
-- [ ] Flaky tests are treated as defects rather than ignored.
+- [x] `AGENTS.md` exists.
+- [x] Approved scope lives in `REQUIREMENTS.md`.
+- [x] Future work is separated into `FUTURE_WORK.md`.
+- [x] Architecture has a defined home.
+- [x] Current limitations/status have a defined home.
+- [ ] Exact setup/run/test/deploy commands are populated after source capture.
+- [ ] Recurring failures have troubleshooting documentation.
 
-### 4. Documentation and Instructions
+## 5. Safe execution
 
-- [x] `AGENTS.md` exists with agent operating rules.
-- [x] Approved scope and acceptance criteria have a defined home in `REQUIREMENTS.md`.
-- [x] Architecture has a defined home in `docs/ARCHITECTURE.md`.
-- [ ] Exact setup/run/build/test/validation/deploy commands are documented after tool selection.
-- [ ] Troubleshooting information covers recurring non-obvious failures.
-- [ ] Documentation is updated in the same change as behavior/architecture changes.
+- [ ] Agents can use a test/non-production path for manager code changes.
+- [ ] Production model changes always preserve rollback.
+- [ ] Destructive actions require explicit approved scope.
+- [ ] Long-running work produces handoffs and does not rely on hidden shell history.
 
-### 5. Development Environment and Execution
+## 6. Observability
 
-- [ ] The selected development environment is reproducible.
-- [ ] Agents have an isolated/sandboxed execution path appropriate to the project risk.
-- [ ] Required local/external dependencies are documented and reproducible.
-- [ ] Long-running agent work can be resumed or handed off without relying on hidden local state.
+- [ ] Structured service logs are documented.
+- [ ] Recovery actions are auditable.
+- [ ] Deployment history/benchmarks are inspectable.
+- [ ] Hardware/model health can be correlated with deployment revisions.
 
-### 6. Code Quality
+## 7. Security
 
-- [ ] Code is modular with clear boundaries that agents and humans can reason about.
-- [ ] Naming and directory structure are consistent and documented by usage.
-- [ ] Complexity is actively controlled; oversized files/functions are refactored when they hinder reasoning or testing.
-- [ ] Public/internal interfaces are clear enough to change safely.
+- [ ] Protected branch / human review is enabled.
+- [ ] Secret scanning is part of CI or required validation.
+- [ ] Example configs contain no production secrets.
+- [ ] State-changing management APIs have tests for authorization.
+- [ ] ACMS service-to-service auth is approved before implementation.
 
-### 7. Debugging and Observability
+## 8. Handoff / continuity
 
-- [ ] Error messages provide actionable context.
-- [ ] Structured logging exists where appropriate.
-- [ ] Metrics exist for operationally important behavior where applicable.
-- [ ] Tracing/correlation exists for distributed or multi-step flows where applicable.
-- [ ] Agents/humans have a documented path to inspect failures without exposing secrets.
+A new agent should be able to answer from the repository alone:
 
-### 8. Security and Governance
-
-- [ ] Protected branches / equivalent controls prevent unreviewed production merges.
-- [ ] Human approval is required before merge under the current operating model.
-- [ ] Secret scanning and dependency/security scanning are configured using tools appropriate to the stack.
-- [ ] Secrets are not stored in source control.
-- [ ] Security-sensitive boundaries are documented in architecture when applicable.
-- [ ] High-risk/destructive actions require explicit human approval.
-
-## Repository-Level Operating Signals
-
-Before calling the project agent-ready for production work, a human should be able to answer **yes** to all of these:
-
-- Can an agent discover what it is supposed to build from approved requirements?
-- Can it discover the exact commands needed to set up, validate, test, and build the project?
-- Can it run those commands in a reproducible, isolated environment?
-- Can it understand the system boundaries and important decisions from repository-local documentation?
-- Can it detect failures through tests, diagnostics, logs, and other relevant observability?
-- Are security controls and human escalation points explicit?
-- Will significant agent-originated decisions be stopped for human approval?
-- Can another human or agent continue the work from the repository and handoff alone?
-
-## Future autonomy
-
-The current policy requires human review before merge. A future operating model may allow low-risk changes to pass CI and merge autonomously within explicit guardrails, but that is future work and requires a separate human-approved governance decision before implementation.
+- What does LLM Manager own?
+- What does ACMS own?
+- How do I discover current models and health?
+- How do I place a deployment into maintenance safely?
+- How do I preserve and restore a known-good model configuration?
+- Where are benchmark/history records represented?
+- Which parts are intentionally not implemented yet?
+- Which production limitations require extra caution?
