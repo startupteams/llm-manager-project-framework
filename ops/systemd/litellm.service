@@ -1,0 +1,17 @@
+[Unit]
+Description=LiteLLM proxy gateway (LLM Manager)
+After=network-online.target llm-manager-web.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/etc/llm-manager
+Environment="SALT_KEY=/etc/llm-manager/secrets/litellm_salt"
+ExecStart=/opt/llm-manager/venv/bin/litellm --config /etc/llm-manager/litellm_config.yaml --host 127.0.0.1 --port 4000
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

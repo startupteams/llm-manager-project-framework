@@ -1,0 +1,14 @@
+[Unit]
+Description=LLM Manager Emporia facility power collector (Phase 6)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/llm-manager/venv/bin/python /opt/llm-manager/collectors/emporia_adapter.py --loop
+Restart=on-failure
+RestartSec=60
+User=root
+
+[Install]
+WantedBy=multi-user.target

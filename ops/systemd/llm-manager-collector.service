@@ -1,0 +1,16 @@
+[Unit]
+Description=LLM Manager GPU power collector (Phase 5)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/llm-manager
+ExecStart=/opt/llm-manager/venv/bin/python3 /opt/llm-manager/collectors/gpu_power_collector.py
+Environment=GPU_SAMPLE_SECONDS=20
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
