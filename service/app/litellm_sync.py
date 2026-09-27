@@ -58,7 +58,8 @@ def build_model_list(conn):
         if key in seen:
             continue
         seen.add(key)
-        local_alias = {"10.0.20.161": "local-00111", "10.0.20.162": "local-00112",
+        local_alias = {"10.0.20.168": "local-00111", "10.0.20.161": "local-00111",
+                       "10.0.20.162": "local-00112",
                        "10.0.20.163": "local-00143", "10.0.20.164": "local-00144",
                        "10.0.20.165": "dummy-local-llamacpp"}.get(ip, f"local-{ip}")
         rpm = 30 if engine == "llamacpp" else 300
@@ -86,7 +87,8 @@ def build_model_list(conn):
     for alias, target in alias_rows:
         backends = [(n, ip) for n, ip in target_backends if n == target]
         for n, ip in backends[:1]:  # primary backend only; health gating picks winner
-            local_alias = {"10.0.20.161": "local-00111", "10.0.20.162": "local-00112",
+            local_alias = {"10.0.20.168": "local-00111", "10.0.20.161": "local-00111",
+                           "10.0.20.162": "local-00112",
                            "10.0.20.163": "local-00143", "10.0.20.164": "local-00144",
                            "10.0.20.165": "dummy-local-llamacpp"}.get(ip, f"local-{ip}")
             models.append({

@@ -24,7 +24,8 @@ APP_VERSION = "0.11.0-default-baseline"
 
 SECRETS = "/etc/llm-manager/secrets"
 VLLM_HOSTS = [
-    {"name": "MIAM-00111 / VM103", "ip": "10.0.20.161"},
+    {"name": "MIAM-00111 / VM102", "ip": "10.0.20.168"},
+    {"name": "MIAM-00111 / VM103 (rollback)", "ip": "10.0.20.161"},
     {"name": "MIAM-00112 / VM401", "ip": "10.0.20.162"},
     {"name": "MIAM-00143 / VM109", "ip": "10.0.20.163"},
     {"name": "MIAM-00144 / VM111", "ip": "10.0.20.164"},

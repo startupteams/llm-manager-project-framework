@@ -31,7 +31,12 @@ PG_PW_FILE = f"{SECRETS}/pg_app_creds"
 LITELLM_URL = "http://127.0.0.1:4000"
 
 # ip -> (node, vmid); fixed map per plan §A3 / current cluster layout
+# 2026-09-27 §21 correction: active MIAM-00111 deployment = VM102 / 10.0.20.168
+# (qwen3.8-flash-next). VM103 / 10.0.20.161 remains mapped for admin power
+# actions on the rollback VM; desired-state gating (STOPPED_INTENTIONAL) is what
+# keeps recovery from auto-starting it (§21.8).
 NODE_MAP = {
+    "10.0.20.168": ("miam00111", 102),
     "10.0.20.161": ("miam00111", 103),
     "10.0.20.162": ("miam00112", 401),
     "10.0.20.163": ("miam00143", 109),
@@ -248,6 +253,8 @@ def sync_registry():
                                 backend_url, context_limit, health, routable, last_verified, updated_at)
                             VALUES (%s,%s,%s,%s,%s,%s,%s,now(),now())
                             ON CONFLICT (logical_model_name, host_id) DO UPDATE SET
+                                engine=EXCLUDED.engine,
+                                backend_url=EXCLUDED.backend_url,
                                 context_limit=EXCLUDED.context_limit,
                                 health=EXCLUDED.health, routable=EXCLUDED.routable,
                                 last_verified=now(), updated_at=now()""",
