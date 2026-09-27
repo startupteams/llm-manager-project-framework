@@ -26,7 +26,7 @@ die() { echo "FATAL: $*" >&2; ledger "abort" "\"$*\""; exit 1; }
 echo "==> LLM Manager release transaction ($(stamp))"
 
 # ---- Phase A: preflight --------------------------------------------------------
-./"$(dirname "$0")/preflight.sh" "$TARBALL" $([ "$STAGING" = 1 ] && echo --staging) || die "preflight failed"
+"$(dirname "$0")/preflight.sh" "$TARBALL" $([ "$STAGING" = 1 ] && echo --staging) || die "preflight failed"
 
 # snapshot current state
 PREV_REL=""
@@ -143,7 +143,7 @@ restart llm-manager-recovery || FAILHERE=1   # recovery LAST
 
 # ---- Phase I: smoke ------------------------------------------------------------------
 sleep 3
-if ./$(dirname "$0")/healthcheck.sh $([ "$STAGING" = 1 ] && echo --staging); then
+if "$(dirname "$0")/healthcheck.sh" $([ "$STAGING" = 1 ] && echo --staging); then
     echo "==> Release ACCEPTED ($REL_SHA)"
     ledger "accepted" "{\"release\":\"$REL_SHA\"}"
     exit 0
@@ -160,7 +160,7 @@ if [ -n "$PREV_REL" ] && [ -d "$RELEASES/$PREV_REL" ]; then
     systemctl restart llm-manager-emporia || true
     systemctl restart llm-manager-recovery || true
     sleep 3
-    if ./$(dirname "$0")/healthcheck.sh; then
+    if "$(dirname "$0")/healthcheck.sh"; then
         echo "==> ROLLBACK COMPLETE — back on $PREV_REL"
         ledger "rollback_complete" "{\"release\":\"$PREV_REL\"}"
     else
