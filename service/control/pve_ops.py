@@ -9,6 +9,7 @@ Target map is fixed; arbitrary VMID/node input is rejected.
 import json, os, sys, urllib.request, ssl
 
 NODE_MAP = {
+    "10.0.20.168": ("miam00111", "102"),
     "10.0.20.161": ("miam00111", "103"),
     "10.0.20.162": ("miam00112", "401"),
     "10.0.20.163": ("miam00143", "109"),
