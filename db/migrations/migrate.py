@@ -33,7 +33,7 @@ def connect():
     host = os.environ.get("LLM_MANAGER_PG_HOST", "127.0.0.1")
     db = os.environ.get("LLM_MANAGER_PG_DB", "llmmanager")
     user = os.environ.get("LLM_MANAGER_PG_USER", "llmmanager")
-    pw = os.environ.get("LLM_MANAGER_PG_PASSWORD")
+    pw = os.environ.get("LLM_MANAGER_PG_PASSWORD") or None
     if pw is None:
         # Same credential contract as the app (main.py _load_pg_pw): the
         # PG_PW= line inside /etc/llm-manager/secrets/pg_app_creds. Keeping
