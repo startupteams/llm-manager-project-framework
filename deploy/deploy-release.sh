@@ -26,6 +26,13 @@ die() { echo "FATAL: $*" >&2; ledger "abort" "\"$*\""; exit 1; }
 echo "==> LLM Manager release transaction ($(stamp))"
 
 # ---- Phase A: preflight --------------------------------------------------------
+# First promotion of the flat layout (prod, no current symlink yet): allow the
+# missing-current preflight check as a WARN for this one transaction.
+PROMOTION=0
+if [ "$STAGING" = 0 ] && [ ! -e "$APP_ROOT/current" ]; then
+    PROMOTION=1
+    export LLM_MANAGER_FIRST_PROMOTION=1
+fi
 "$(dirname "$0")/preflight.sh" "$TARBALL" $([ "$STAGING" = 1 ] && echo --staging) || die "preflight failed"
 
 # snapshot current state
