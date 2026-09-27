@@ -24,7 +24,7 @@ from datetime import datetime, timezone, date
 
 CREDS = "/etc/llm-manager/secrets/emporia_creds"
 LOG = "/var/log/llm-manager/emporia.log"
-PG = dict(host="10.0.20.116", port=5432, dbname="llmmanager", user="llmmanager")
+PG = dict(host=os.environ.get("LLM_MANAGER_PG_HOST", "10.0.20.116"), port=5432, dbname="llmmanager", user="llmmanager")
 
 _NONASCII = re.compile(r"[^\x20-\x7e]")
 

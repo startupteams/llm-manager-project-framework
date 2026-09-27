@@ -15,7 +15,7 @@ import psycopg2
 from datetime import datetime, timezone
 
 SECRETS = "/etc/llm-manager/secrets"
-PG_HOST = "10.0.20.116"
+PG_HOST = os.environ.get("LLM_MANAGER_PG_HOST", "10.0.20.116")
 PG_DB = "llmmanager"
 PG_USER = "llmmanager"
 CONTROL_KEY = f"{SECRETS}/keys/id_ed25519"

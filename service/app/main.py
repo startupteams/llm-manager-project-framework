@@ -31,7 +31,7 @@ VLLM_HOSTS = [
     {"name": "MIAM-00144 / VM111", "ip": "10.0.20.164"},
     {"name": "MIAM-00149 / VM149 (llama.cpp CPU)", "ip": "10.0.20.165"},
 ]
-PG_HOST = "10.0.20.116"
+PG_HOST = os.environ.get("LLM_MANAGER_PG_HOST", "10.0.20.116")
 PG_DB = "llmmanager"
 PG_USER = "llmmanager"
 PG_PW_FILE = f"{SECRETS}/pg_app_creds"
