@@ -107,7 +107,10 @@ class ProxmoxVMProvider:
                              retries: int = 3) -> None:
         # Lock guard: refuse to configure a locked VM (clone race guard, found live)
         for _ in range(retries):
-            cfg = self.vm_config(spec.node, vmid)
+            try:
+                cfg = self._call("GET", f"/nodes/{spec.node}/qemu/{vmid}/config") or {}
+            except Exception:
+                cfg = {"lock": "clone"}  # a failed read during clone means STILL LOCKED
             if not cfg.get("lock"):
                 break
             time.sleep(3)
