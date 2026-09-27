@@ -76,7 +76,10 @@ jobs:
           echo "ARTIFACT=$(readlink -f "$ART")" >> "$GITHUB_ENV"
 
       - name: Transfer artifact to staging
-        run: scp "$ARTIFACT" "$ARTIFACT.sha256" llm-manager-deploy@10.0.20.131:/tmp/
+        run: |
+          # clear stale artifacts so the transaction can only pick THIS one
+          ssh llm-manager-deploy@10.0.20.131 "rm -f /tmp/llm-manager-*.tar.gz /tmp/llm-manager-*.tar.gz.sha256"
+          scp "$ARTIFACT" "$ARTIFACT.sha256" llm-manager-deploy@10.0.20.131:/tmp/
 
       - name: Preflight staging
         run: ssh llm-manager-deploy@10.0.20.131 "bash -s" < deploy/preflight.sh "/tmp/$(basename "$ARTIFACT")" --staging
@@ -85,7 +88,7 @@ jobs:
         run: |
           ssh llm-manager-deploy@10.0.20.131 "bash -s" <<'REMOTE'
           set -euo pipefail
-          ART=$(ls /tmp/llm-manager-*.tar.gz | head -1)
+          ART=$(ls -t /tmp/llm-manager-*.tar.gz | head -1)
           if [ ! -e /opt/llm-manager/current ]; then
             sudo /opt/llm-manager-deploy/bootstrap-wrapper.sh "$ART" --staging
           else
