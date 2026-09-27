@@ -23,10 +23,11 @@ case "$HEALTH" in
     *) fail "/healthz not healthy ('$HEALTH')" ;;
 esac
 
-# 3. /v1/models — gated model inventory answers
+# 3. /v1/models — gated model inventory answers; 401 = route alive with auth gate enforced
 MODELS="$(curl -sk --max-time 10 https://127.0.0.1/v1/models -H 'Host: llm-manager.marion-ia-usa.internal' 2>/dev/null | head -c 400 || true)"
 case "$MODELS" in
     *'"object":"list"'*|*'"data":['*) ok "/v1/models responds" ;;
+    *'invalid or missing API key'*) ok "/v1/models route alive (agent-key gate enforced)" ;;
     *) [ "$STAGING" = "1" ] && echo "  INFO: /v1/models empty in staging (no backends yet — acceptable)" || fail "/v1/models not responding ('$MODELS')" ;;
 esac
 
