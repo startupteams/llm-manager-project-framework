@@ -24,7 +24,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 SECRETS = "/etc/llm-manager/secrets"
-PG_HOST = "10.0.20.116"
+PG_HOST = os.environ.get("LLM_MANAGER_PG_HOST", "10.0.20.116")
 PG_DB = "llmmanager"
 PG_USER = "llmmanager"
 PG_PW_FILE = f"{SECRETS}/pg_app_creds"
