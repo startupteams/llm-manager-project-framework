@@ -30,26 +30,27 @@ def connect():
     dsn = os.environ.get("LLM_MANAGER_PG_DSN")
     if dsn:
         return psycopg2.connect(dsn, connect_timeout=5)
-    host = os.environ.get("LLM_MANAGER_PG_HOST", "127.0.0.1")
-    db = os.environ.get("LLM_MANAGER_PG_DB", "llmmanager")
-    user = os.environ.get("LLM_MANAGER_PG_USER", "llmmanager")
-    pw = os.environ.get("LLM_MANAGER_PG_PASSWORD") or None
-    if pw is None:
-        # Same credential contract as the app (main.py _load_pg_pw): the
-        # PG_PW= line inside /etc/llm-manager/secrets/pg_app_creds. Keeping
-        # one source of truth means the transaction needs no duplicated
-        # secret env plumbing (plan §8).
-        pw_file = os.environ.get(
-            "LLM_MANAGER_PG_PW_FILE", "/etc/llm-manager/secrets/pg_app_creds")
-        try:
-            with open(pw_file) as f:
-                for line in f:
-                    if line.startswith("PG_PW="):
-                        pw = line.strip().split("=", 1)[1]
-                        break
-        except OSError:
-            pw = None
-    return psycopg2.connect(host=host, dbname=db, user=user, password=pw or "", connect_timeout=5)
+    # Same credential contract as the app (main.py): env overrides > the
+    # PG_HOST/PG_DB/PG_USER/PG_PW lines inside pg_app_creds > local defaults.
+    # Keeping one source of truth means the transaction needs no duplicated
+    # secret env plumbing (plan §8).
+    file_vals = {}
+    pw_file = os.environ.get(
+        "LLM_MANAGER_PG_PW_FILE", "/etc/llm-manager/secrets/pg_app_creds")
+    try:
+        with open(pw_file) as f:
+            for line in f:
+                line = line.strip()
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    file_vals[k] = v
+    except OSError:
+        pass
+    host = os.environ.get("LLM_MANAGER_PG_HOST") or file_vals.get("PG_HOST") or "127.0.0.1"
+    db = os.environ.get("LLM_MANAGER_PG_DB") or file_vals.get("PG_DB") or "llmmanager"
+    user = os.environ.get("LLM_MANAGER_PG_USER") or file_vals.get("PG_USER") or "llmmanager"
+    pw = os.environ.get("LLM_MANAGER_PG_PASSWORD") or file_vals.get("PG_PW") or ""
+    return psycopg2.connect(host=host, dbname=db, user=user, password=pw, connect_timeout=5)
 
 
 def ensure_ledger(cur):
