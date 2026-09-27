@@ -21,6 +21,7 @@ PG_USER = "llmmanager"
 CONTROL_KEY = f"{SECRETS}/keys/id_ed25519"
 SAMPLE_SECONDS = int(os.environ.get("GPU_SAMPLE_SECONDS", "20"))
 HOSTS = [
+    ("10.0.20.168", "MIAM-00111/VM102"),
     ("10.0.20.161", "MIAM-00111/VM103"),
     ("10.0.20.162", "MIAM-00112/VM401"),
     ("10.0.20.163", "MIAM-00143/VM109"),
