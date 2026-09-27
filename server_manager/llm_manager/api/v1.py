@@ -25,8 +25,8 @@ def get_model_route(route: str, request: Request):
         from sqlalchemy import text
 
         row = session.execute(
-            text("SELECT model_name, engine, backend_url, context_limit, healthy, routable "
-                 "FROM model_registry WHERE model_name = :m"),
+            text("SELECT logical_model_name, engine, backend_url, context_limit, health, routable "
+                 "FROM model_registry WHERE logical_model_name = :m"),
             {"m": route},
         ).mappings().all()
         if not row:
