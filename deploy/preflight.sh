@@ -45,8 +45,11 @@ else
     [ "$STAGING" = "1" ] && echo "  INFO: secrets dir empty (staging may bootstrap later)" || fail "secrets directory empty"
 fi
 
-# DB reachable (mirrors the app's credential contract: env > pg_app_creds file > local default)
-if python3 - <<'PY' >/dev/null 2>&1
+# DB reachable (mirrors the app's credential contract: env > pg_app_creds file > local default).
+# System python may lack psycopg2 (venv-only dep) — fall back to the app venv interpreter.
+PYBIN=python3
+command -v "$PYBIN" >/dev/null 2>&1 && "$PYBIN" -c "import psycopg2" >/dev/null 2>&1 || PYBIN=/opt/llm-manager/venv/bin/python3
+if "$PYBIN" - <<'PY' >/dev/null 2>&1
 import os, psycopg2
 SECRETS = "/etc/llm-manager/secrets"
 def from_file(key):
