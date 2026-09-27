@@ -24,6 +24,8 @@ REL_SHA="$(tar -xzOf "$TARBALL" --wildcards '*/release_manifest.json' 2>/dev/nul
 # current release record
 if [ -e "$APP_ROOT/current" ]; then
     ok "current release: $(readlink "$APP_ROOT/current" | xargs basename 2>/dev/null || readlink "$APP_ROOT/current")"
+elif [ "${LLM_MANAGER_FIRST_PROMOTION:-0}" = "1" ]; then
+    echo "  WARN: no current release yet (first promotion of the flat layout — allowed)"
 else
     [ "$STAGING" = "1" ] && echo "  INFO: no current release yet (fresh staging)" || fail "no current release symlink"
 fi
@@ -43,12 +45,25 @@ else
     [ "$STAGING" = "1" ] && echo "  INFO: secrets dir empty (staging may bootstrap later)" || fail "secrets directory empty"
 fi
 
-# DB reachable
+# DB reachable (mirrors the app's credential contract: env > pg_app_creds file > local default)
 if python3 - <<'PY' >/dev/null 2>&1
 import os, psycopg2
-dsn = os.environ.get("LLM_MANAGER_PG_DSN")
-if not dsn:
-    dsn = f"host={os.environ.get('LLM_MANAGER_PG_HOST','127.0.0.1')} dbname={os.environ.get('LLM_MANAGER_PG_DB','llmmanager')} user={os.environ.get('LLM_MANAGER_PG_USER','llmmanager')} password={os.environ.get('LLM_MANAGER_PG_PASSWORD','')}"
+SECRETS = "/etc/llm-manager/secrets"
+def from_file(key):
+    try:
+        with open(os.path.join(SECRETS, "pg_app_creds")) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith(key + "="):
+                    return line.split("=", 1)[1]
+    except OSError:
+        pass
+    return None
+host = os.environ.get("LLM_MANAGER_PG_HOST") or from_file("PG_HOST") or "127.0.0.1"
+db = os.environ.get("LLM_MANAGER_PG_DB") or from_file("PG_DB") or "llmmanager"
+user = os.environ.get("LLM_MANAGER_PG_USER") or from_file("PG_USER") or "llmmanager"
+pw = os.environ.get("LLM_MANAGER_PG_PASSWORD") or from_file("PG_PW") or ""
+dsn = os.environ.get("LLM_MANAGER_PG_DSN") or f"host={host} dbname={db} user={user} password={pw}"
 psycopg2.connect(dsn, connect_timeout=4).close()
 PY
 then ok "postgres reachable"; else [ "$STAGING" = "1" ] && echo "  INFO: postgres unreachable (staging may configure later)" || fail "postgres unreachable"; fi
