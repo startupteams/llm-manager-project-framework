@@ -89,6 +89,21 @@ if [ ! -x "$VENV/bin/python" ]; then
     "$VENV/bin/pip" install --quiet --upgrade pip
     "$VENV/bin/pip" install --quiet -r "$REL_DST/config/examples/requirements-v011-venv-freeze.txt"
 fi
+# LiteLLM's Prisma client needs generated binaries in EVERY fresh release venv
+# (found live: fresh release venv 500s litellm at startup with "Unable to find
+# Prisma binaries" until `prisma generate` runs — node is preinstalled on the VMs).
+PRISMA_SCHEMA="$VENV/lib/python3.12/site-packages/litellm/proxy/schema.prisma"
+if [ -f "$PRISMA_SCHEMA" ] && command -v node >/dev/null 2>&1; then
+    PRISMA_MARKER="$VENV/.prisma-generated"
+    if [ ! -f "$PRISMA_MARKER" ]; then
+        echo "==> prisma generate (release venv)"
+        (cd "$(dirname "$PRISMA_SCHEMA")" && \
+            PATH="$VENV/bin:/usr/local/bin:/usr/bin:/bin" \
+            "$VENV/bin/prisma" generate --schema schema.prisma >/dev/null 2>&1) \
+            && touch "$PRISMA_MARKER" \
+            || die "prisma generate failed"
+    fi
+fi
 for d in logs state; do [ -e "$REL_DST/$d" ] || ln -s "$APP_ROOT/shared/$d" "$REL_DST/$d"; done
 
 # legacy path compat symlinks (same as bootstrap §5b)
