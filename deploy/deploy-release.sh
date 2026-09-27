@@ -151,6 +151,25 @@ else
     echo "==> migrations skipped (skip=$SKIP_MIG)"
 fi
 
+# ---- Phase F2: agent_runtime_manager migrations (SQLAlchemy/Alembic, §1/§6) ----------
+if [ "$SKIP_MIG" = "0" ] && [ -d "$REL_DST/server_manager/agent_runtime_manager/migrations" ]; then
+    echo "==> agent_runtime_manager migrations (alembic)"
+    # ARM DSN: env > arm_db_creds file (separate credentials, §1)
+    ARM_PW_FILE="${SERVER_MANAGER_ARM_CREDS_FILE:-/etc/llm-manager/secrets/arm_db_creds}"
+    if [ -f "$ARM_PW_FILE" ]; then
+        AHOST=$(sed -n 's/^PG_HOST=//p' "$ARM_PW_FILE" | head -1)
+        ADB=$(sed -n 's/^PG_DB=//p' "$ARM_PW_FILE" | head -1)
+        AUSER=$(sed -n 's/^PG_USER=//p' "$ARM_PW_FILE" | head -1)
+        APW=$(sed -n 's/^PG_PW=//p' "$ARM_PW_FILE" | head -1)
+        export SERVER_MANAGER_ARM_PG_HOST="${SERVER_MANAGER_ARM_PG_HOST:-$AHOST}"
+        export SERVER_MANAGER_ARM_PG_DB="${SERVER_MANAGER_ARM_PG_DB:-$ADB}"
+        export SERVER_MANAGER_ARM_PG_USER="${SERVER_MANAGER_ARM_PG_USER:-$AUSER}"
+        export SERVER_MANAGER_ARM_PG_PASSWORD="${SERVER_MANAGER_ARM_PG_PASSWORD:-$APW}"
+    fi
+    (cd "$REL_DST" && "$VENV/bin/alembic" -c alembic.ini upgrade head) \
+        || { echo "ARM migrations failed — rolling back candidate install"; rm -rf "$REL_DST"; die "ARM migration failure"; }
+fi
+
 # ---- Phase G: activate --------------------------------------------------------------
 ln -sfn "$REL_DST" "$APP_ROOT/current.new"
 mv -T "$APP_ROOT/current.new" "$APP_ROOT/current"   # atomic-ish swap
