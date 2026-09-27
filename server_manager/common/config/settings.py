@@ -63,7 +63,7 @@ class Settings:
 
     # --- LiteLLM / PVE references ---
     litellm_url: str = os.environ.get("SERVER_MANAGER_LITELLM_URL", "http://127.0.0.1:4000")
-    pve_api_url: str = os.environ.get("SERVER_MANAGER_PVE_URL", "https://10.0.20.135:8006")
+    pve_api_url: str = os.environ.get("SERVER_MANAGER_PVE_URL", "https://10.0.20.135:8006/api2/json")
     pve_token_id: str = os.environ.get("SERVER_MANAGER_PVE_TOKEN_ID", "llm-manager@pve!manager-control")
 
     # --- ownership safety (§8): protected VMs are NEVER destroyable ---
