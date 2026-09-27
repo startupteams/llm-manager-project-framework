@@ -79,7 +79,7 @@ jobs:
         run: scp "$ARTIFACT" "$ARTIFACT.sha256" llm-manager-deploy@10.0.20.131:/tmp/
 
       - name: Preflight staging
-        run: ssh llm-manager-deploy@10.0.20.131 "bash -s" < deploy/preflight.sh "$ARTIFACT" --staging
+        run: ssh llm-manager-deploy@10.0.20.131 "bash -s" < deploy/preflight.sh "/tmp/$(basename "$ARTIFACT")" --staging
 
       - name: Bootstrap (first deploy) or release-transaction deploy
         run: |
