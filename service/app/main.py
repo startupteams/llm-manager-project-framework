@@ -272,6 +272,68 @@ def _touch_preset(cur, pid, user):
                                             AND deleted_at IS NULL), 0)
                    WHERE id = %s AND deleted_at IS NULL""", (user, pid, pid))
 
+# ---- §21.7: DB-backed active placement as source of truth --------------------
+# active_hosts (physical_host -> active_host_ip) overrides module constants at
+# runtime. Consumers below derive the ACTIVE host per physical host from the DB;
+# VLLM_HOSTS remains the full inventory + legacy fallback when DB is unavailable.
+try:
+    import active_deployments as _ad  # noqa: F401
+    _ad.ensure_table()
+    _AD_ENABLED = True
+except Exception as _ad_err:  # pragma: no cover
+    import logging
+    logging.getLogger("uvicorn").error("active_deployments failed to load: %s", _ad_err)
+    _AD_ENABLED = False
+    _ad = None
+
+
+def _physical_host_for_ip(ip):
+    """Map a guest IP to its physical host label (MIAM site) via NODE_MAP-like grouping."""
+    if ip.startswith("10.0.20.16"):
+        return "MIAM-00111"
+    if ip in ("10.0.20.162",):
+        return "MIAM-00112"
+    if ip in ("10.0.20.163",):
+        return "MIAM-00143"
+    if ip in ("10.0.20.164",):
+        return "MIAM-00144"
+    if ip in ("10.0.20.165",):
+        return "MIAM-00149"
+    return ip
+
+
+def _active_hosts():
+    """§21.7: return the effective host list — inventory rows, but with the
+    active placement per physical host driven by active_hosts (DB) when available.
+    Non-active inventory rows on a physical host with an active entry are demoted
+    to the END of the list (kept for admin power actions, not for routing display)."""
+    if not _AD_ENABLED or _ad is None:
+        return list(VLLM_HOSTS)
+    active = []
+    inactive = []
+    promoted = set()
+    for h in VLLM_HOSTS:
+        phys = _physical_host_for_ip(h["ip"])
+        db_active = _ad.active_ip_for(phys, fallback=None)
+        if db_active == h["ip"]:
+            active.append(h)
+            promoted.add(phys)
+    for h in VLLM_HOSTS:
+        phys = _physical_host_for_ip(h["ip"])
+        if phys not in promoted:
+            inactive.append(h)
+    return active + inactive
+
+
+def _is_active_ip(ip):
+    """True when `ip` is the DB-declared active deployment for its physical host."""
+    if not _AD_ENABLED or _ad is None:
+        return True
+    phys = _physical_host_for_ip(ip)
+    db_active = _ad.active_ip_for(phys, fallback=None)
+    return db_active is None or db_active == ip
+
+
 # ---------------------------------------------------------------- routes: health/status
 
 @app.get("/healthz")
@@ -284,13 +346,16 @@ def api_status(request: Request):
     user, role = current_user(request)
     if not user:
         return JSONResponse({"error": "auth required"}, status_code=401)
-    with cf.ThreadPoolExecutor(max_workers=5) as ex:
-        futs = {ex.submit(probe_vllm, h): h["ip"] for h in VLLM_HOSTS}
+    hosts_eff = _active_hosts()
+    with cf.ThreadPoolExecutor(max_workers=6) as ex:
+        futs = {ex.submit(probe_vllm, h): h["ip"] for h in hosts_eff}
         pg = ex.submit(probe_pg)
         hosts = [f.result() for f in cf.as_completed(futs)]
-        hosts.sort(key=lambda h: h["ip"])
+        hosts.sort(key=lambda h: (0 if _is_active_ip(h["ip"]) else 1, h["ip"]))
         pg = pg.result()
-    return {"version": APP_VERSION, "hosts": hosts, "postgres": pg, "ts": time.time()}
+    return {"version": APP_VERSION, "hosts": hosts, "postgres": pg,
+            "active_source": "db:active_hosts" if _AD_ENABLED else "legacy:constants",
+            "ts": time.time()}
 
 
 # ---------------------------------------------------------------- power & cost (Phase 5)
