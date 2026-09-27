@@ -424,6 +424,62 @@ async def power_off(ip: str, request: Request):
     return {"status": "ok" if ok else "error"}
 
 
+# ---------------------------------------------------------------- §21.7 active-placement API
+
+def _ad_state():
+    """Best-effort access to the §21.7 active_deployments subsystem loaded by main.py.
+    Returns (enabled, module) — (False, None) when unavailable (legacy mode)."""
+    import sys
+    mod = sys.modules.get("active_deployments")
+    if mod is not None and getattr(sys.modules.get("main"), "_AD_ENABLED", False):
+        return True, mod
+    # standalone recovery-engine context: import directly
+    if mod is None:
+        try:
+            mod = __import__("active_deployments")
+            mod.ensure_table()
+            return True, mod
+        except Exception:
+            return False, None
+    return True, mod
+
+
+@ROUTER.get("/api/hosts/active")
+def get_active_deployments(request: Request):
+    user = request.session.get("user")
+    if not user:
+        return JSONResponse({"error": "auth required"}, status_code=401)
+    enabled, mod = _ad_state()
+    return {"active": mod.all_active() if enabled else {}}
+
+
+@ROUTER.post("/api/hosts/active")
+async def set_active_deployment(request: Request):
+    """Promote a guest IP to the active deployment for its physical host (§21.7).
+    DB update only — no Python source edits. Downstream consumers (dashboard,
+    probes, recovery, registry, routing) follow automatically on next read."""
+    user = request.session.get("user")
+    role = request.session.get("role")
+    if not user:
+        return JSONResponse({"error": "auth required"}, status_code=401)
+    if role not in {"Admin", "Security-Admin"}:
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    enabled, mod = _ad_state()
+    if not enabled:
+        return JSONResponse({"error": "active_deployments subsystem unavailable"}, status_code=503)
+    body = await request.json()
+    ip = (body.get("ip") or "").strip()
+    if ip not in NODE_MAP:
+        return JSONResponse({"error": "unknown host ip"}, status_code=400)
+    from main import _physical_host_for_ip  # local import to avoid cycle at module load
+    result = mod.set_active(_physical_host_for_ip(ip), ip, updated_by=user)
+    if "error" in result:
+        return JSONResponse(result, status_code=500)
+    # immediate registry reconcile so backend_url follows the promotion (§21.3)
+    sync_registry()
+    return result
+
+
 @ROUTER.get("/api/hosts/state")
 def hosts_state():
     """Fleet desired/current state + recovery history for the dashboard."""
