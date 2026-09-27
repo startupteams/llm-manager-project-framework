@@ -37,7 +37,11 @@ def arm_pg(tmp_path_factory):
     """
     data_dir = tmp_path_factory.mktemp("arm-pgdata")
     with pgserver.get_server(str(data_dir)) as srv:
-        uri = srv.get_uri().replace("postgres://", "postgresql+psycopg2://")
+        uri = srv.get_uri()
+        if uri.startswith("postgres://"):
+            uri = uri.replace("postgres://", "postgresql+psycopg2://", 1)
+        elif uri.startswith("postgresql://"):
+            uri = uri.replace("postgresql://", "postgresql+psycopg2://", 1)
         os.environ["SERVER_MANAGER_ARM_PG_DSN"] = uri
 
         from alembic import command
