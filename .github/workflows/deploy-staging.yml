@@ -1,0 +1,84 @@
+name: deploy-staging
+
+# §11: staging CD — automatic after merge to main. Runs ONLY on the dedicated
+# MARION self-hosted runner (never GitHub-hosted; never runs PR code).
+# Trigger: successful ci.yml `artifact` job on main.
+
+on:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-staging:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: [self-hosted, marion, llm-manager-deploy]
+    steps:
+      - name: Resolve CI artifact SHA
+        id: sha
+        run: echo "sha=$(git -C /opt/llm-manager-deploy/workspace rev-parse origin/main 2>/dev/null || echo '')" >> "$GITHUB_OUTPUT"
+
+      - name: Download EXACT CI artifact (same SHA that passed CI — never rebuilt)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const artifacts = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner, repo: context.repo.repo,
+              run_id: run.id,
+            });
+            const art = artifacts.data.artifacts.find(a => a.name.startsWith("llm-manager-"));
+            if (!art) throw new Error("no llm-manager artifact on CI run");
+            const dl = await github.rest.actions.downloadArtifact({
+              owner: context.repo.owner, repo: context.repo.repo,
+              artifact_id: art.id, archive_format: "zip",
+            });
+            const fs = require("fs");
+            fs.writeFileSync(`${process.env.RUNNER_TEMP}/artifact.zip`, Buffer.from(dl.data));
+
+      - name: Unpack + checksum-verify artifact
+        run: |
+          cd "$RUNNER_TEMP"
+          unzip -o artifact.zip
+          ART=$(find . -maxdepth 2 -name 'llm-manager-*.tar.gz' | head -1)
+          [ -n "$ART" ] || { echo "artifact missing"; exit 1; }
+          sha256sum -c "${ART}.sha256"
+          echo "ARTIFACT=$ART" >> "$GITHUB_ENV"
+
+      - name: Preflight staging
+        run: ssh llm-manager-deploy@10.0.20.131 "bash -s" < deploy/preflight.sh "$ARTIFACT" --staging || true
+
+      - name: Transfer artifact to staging
+        run: scp "$ARTIFACT" "$ARTIFACT.sha256" llm-manager-deploy@10.0.20.131:/tmp/
+
+      - name: Bootstrap (first deploy) or release-transaction deploy
+        run: |
+          ssh llm-manager-deploy@10.0.20.131 "bash -s" <<'REMOTE'
+          set -euo pipefail
+          ART=$(ls /tmp/llm-manager-*.tar.gz | head -1)
+          if [ ! -e /opt/llm-manager/current ]; then
+            sudo /opt/llm-manager-deploy/bootstrap-wrapper.sh "$ART" --staging
+          else
+            sudo /opt/llm-manager-deploy/deploy-wrapper.sh "$ART" --staging
+          fi
+          REMOTE
+
+      - name: Post-deploy acceptance (healthcheck)
+        run: ssh llm-manager-deploy@10.0.20.131 "sudo /opt/llm-manager-deploy/healthcheck-wrapper.sh --staging"
+
+      - name: Record deployed SHA
+        run: |
+          ssh llm-manager-deploy@10.0.20.131 "cat /opt/llm-manager/current/release_manifest.json | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"git_sha\"])'" > deployed-sha.txt
+          echo "staging deployed at $(cat deployed-sha.txt)"
