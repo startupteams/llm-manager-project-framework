@@ -28,7 +28,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pytest fastapi "uvicorn" psycopg2-binary ldap3 requests pyyaml itsdangerous python-multipart pgserver
+      - run: pip install pytest fastapi "uvicorn" psycopg2-binary ldap3 requests pyyaml itsdangerous python-multipart pgserver sqlalchemy alembic
       - name: pytest (§21.8 switching regressions)
         run: python -m pytest tests/ -q
       - name: cost/energy integrator gate

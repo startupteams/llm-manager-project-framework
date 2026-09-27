@@ -1,0 +1,15 @@
+[Unit]
+Description=Server Manager API (Agent Runtime Manager + LLM Manager machine API v1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/llm-manager/current
+ExecStart=/opt/llm-manager/current/venv/bin/uvicorn server_manager.api_app:app --host 127.0.0.1 --port 8300
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
