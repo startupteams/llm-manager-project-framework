@@ -28,7 +28,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pytest fastapi "uvicorn" psycopg2-binary ldap3 requests pyyaml
+      - run: pip install pytest fastapi "uvicorn" psycopg2-binary ldap3 requests pyyaml itsdangerous python-multipart pgserver
       - name: pytest (§21.8 switching regressions)
         run: python -m pytest tests/ -q
       - name: cost/energy integrator gate
@@ -40,10 +40,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: gitleaks (binary, no org license needed)
+        run: |
+          curl -sSL -o /tmp/gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --no-git --redact -v
       - name: DSN / private-key pattern gate
         run: |
           ! grep -rInE "postgresql(ql)?\+?://[^/\s:]+:[^@\s/]+@" --include="*.py" --include="*.yaml" --include="*.yml" --include="*.sql" --include="*.conf" . || { echo "DSN with password found"; exit 1; }
@@ -103,10 +104,11 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq nginx >/dev/null
           openssl req -x509 -newkey rsa:2048 -keyout /tmp/t.key -out /tmp/t.crt -days 1 -nodes -subj "/CN=ci-test" 2>/dev/null
-          mkdir -p /etc/llm-manager/tls
+          sudo mkdir -p /etc/llm-manager/tls
           sudo cp /tmp/t.crt /etc/llm-manager/tls/llm-manager.crt
           sudo cp /tmp/t.key /etc/llm-manager/tls/llm-manager.key
-          sudo cp ops/nginx/llm-manager /etc/nginx/sites-enabled/llm-manager
+          sudo cp ops/nginx/llm-manager /etc/nginx/sites-available/llm-manager
+          sudo ln -sf /etc/nginx/sites-available/llm-manager /etc/nginx/sites-enabled/llm-manager
           sudo rm -f /etc/nginx/sites-enabled/default
           sudo nginx -t
 
@@ -164,7 +166,7 @@ jobs:
           LLM_MANAGER_PG_PASSWORD: ci-postgres
         run: |
           psql -h 127.0.0.1 -U postgres -d llmmanager -f db/schema/schema.sql
-          pip install fastapi "uvicorn" psycopg2-binary ldap3 requests pyyaml httpx
+          pip install fastapi "uvicorn" psycopg2-binary ldap3 requests pyyaml httpx itsdangerous python-multipart
           # seed minimal hosts row so v011 init stamping has something to stamp
           psql -h 127.0.0.1 -U postgres -d llmmanager -c \
             "INSERT INTO hosts (host_id, name, guest_ip) VALUES (1,'ci-stub','127.0.0.1') ON CONFLICT DO NOTHING" || true
