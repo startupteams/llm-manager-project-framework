@@ -84,6 +84,13 @@ if [ ! -x "$VENV/bin/python" ]; then
 fi
 for d in logs state; do [ -e "$REL_DST/$d" ] || ln -s "$APP_ROOT/shared/$d" "$REL_DST/$d"; done
 
+# legacy path compat symlinks (same as bootstrap §5b)
+ln -sfn "$REL_DST/service/app"          "$REL_DST/app"
+ln -sfn "$REL_DST/service/collectors"   "$REL_DST/collectors"
+ln -sfn "$REL_DST/service/control"      "$REL_DST/control"
+ln -sfn "$REL_DST/service/agentmanager" "$REL_DST/agentmanager"
+ln -sfn "$REL_DST/.venv"                "$REL_DST/venv"
+
 # install/refresh unit files pointing at current/
 for unit in "$REL_DST"/ops/systemd/*.service; do
     sed -e 's#/opt/llm-manager/app#/opt/llm-manager/current/app#g' \

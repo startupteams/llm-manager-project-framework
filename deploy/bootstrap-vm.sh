@@ -78,6 +78,16 @@ for d in logs state; do
 done
 install -d "$SHARED/logs" "$SHARED/state"
 
+# --- 5b. Legacy path compat symlinks -------------------------------------------
+# systemd units + app code reference flat names (app/, collectors/, control/,
+# venv/) while the artifact nests under service/ and builds .venv. Symlink once
+# per release so unit files written for /opt/llm-manager/current/... resolve.
+ln -sfn "$REL_DST/service/app"        "$REL_DST/app"
+ln -sfn "$REL_DST/service/collectors" "$REL_DST/collectors"
+ln -sfn "$REL_DST/service/control"    "$REL_DST/control"
+ln -sfn "$REL_DST/service/agentmanager" "$REL_DST/agentmanager"
+ln -sfn "$REL_DST/.venv"              "$REL_DST/venv"
+
 # --- 6. systemd units ----------------------------------------------------------
 # Units point at /opt/llm-manager/current/... so activation = symlink swap.
 for unit in "$REL_DST"/ops/systemd/*.service; do
