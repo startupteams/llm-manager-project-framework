@@ -48,7 +48,7 @@ if python3 - <<'PY' >/dev/null 2>&1
 import os, psycopg2
 dsn = os.environ.get("LLM_MANAGER_PG_DSN")
 if not dsn:
-    dsn = f"host={os.environ.get('LLM_MANAGER_PG_HOST','10.0.20.116')} dbname={os.environ.get('LLM_MANAGER_PG_DB','llmmanager')} user={os.environ.get('LLM_MANAGER_PG_USER','llmmanager')} password={os.environ.get('LLM_MANAGER_PG_PASSWORD','')}"
+    dsn = f"host={os.environ.get('LLM_MANAGER_PG_HOST','127.0.0.1')} dbname={os.environ.get('LLM_MANAGER_PG_DB','llmmanager')} user={os.environ.get('LLM_MANAGER_PG_USER','llmmanager')} password={os.environ.get('LLM_MANAGER_PG_PASSWORD','')}"
 psycopg2.connect(dsn, connect_timeout=4).close()
 PY
 then ok "postgres reachable"; else [ "$STAGING" = "1" ] && echo "  INFO: postgres unreachable (staging may configure later)" || fail "postgres unreachable"; fi

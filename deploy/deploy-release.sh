@@ -111,8 +111,16 @@ echo "  candidate validation passed"
 # ---- Phase F: migrations -----------------------------------------------------------
 if [ "$SKIP_MIG" = "0" ] && [ -d "$REL_DST/db/migrations" ]; then
     echo "==> migrations"
-    LLM_MANAGER_PG_HOST="${LLM_MANAGER_PG_HOST:-10.0.20.116}" \
+    # DB target: environment > web-unit drop-in > local default. NO prod IP default
+    # (plan §8 — a hard-coded prod endpoint in CD tooling is an isolation violation).
+    UNIT_ENV="$(systemctl show llm-manager-web -p Environment --value 2>/dev/null || true)"
+    UNIT_HOST="$(echo "$UNIT_ENV" | tr ' ' '\n' | sed -n 's/^LLM_MANAGER_PG_HOST=//p' | head -1)"
+    UNIT_USER="$(echo "$UNIT_ENV" | tr ' ' '\n' | sed -n 's/^LLM_MANAGER_PG_USER=//p' | head -1)"
+    UNIT_PW="$(echo "$UNIT_ENV" | tr ' ' '\n' | sed -n 's/^LLM_MANAGER_PG_PASSWORD=//p' | head -1)"
+    LLM_MANAGER_PG_HOST="${LLM_MANAGER_PG_HOST:-${UNIT_HOST:-127.0.0.1}}" \
     LLM_MANAGER_PG_DB="${LLM_MANAGER_PG_DB:-llmmanager}" \
+    LLM_MANAGER_PG_USER="${LLM_MANAGER_PG_USER:-${UNIT_USER:-llmmanager}}" \
+    LLM_MANAGER_PG_PASSWORD="${LLM_MANAGER_PG_PASSWORD:-${UNIT_PW:-}}" \
     "$VENV/bin/python" "$REL_DST/db/migrations/migrate.py" apply --git-sha "$REL_SHA" \
         || { echo "migrations failed — rolling back candidate install"; rm -rf "$REL_DST"; die "migration failure"; }
 else
