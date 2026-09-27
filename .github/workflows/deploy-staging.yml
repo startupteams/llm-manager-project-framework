@@ -73,7 +73,7 @@ jobs:
           ART=$(find . -maxdepth 2 -name 'llm-manager-*.tar.gz' | head -1)
           [ -n "$ART" ] || { echo "artifact missing"; exit 1; }
           sha256sum -c "${ART}.sha256"
-          echo "ARTIFACT=$ART" >> "$GITHUB_ENV"
+          echo "ARTIFACT=$(readlink -f "$ART")" >> "$GITHUB_ENV"
 
       - name: Preflight staging
         run: ssh llm-manager-deploy@10.0.20.131 "bash -s" < deploy/preflight.sh "$ARTIFACT" --staging
