@@ -33,8 +33,23 @@ def connect():
     host = os.environ.get("LLM_MANAGER_PG_HOST", "127.0.0.1")
     db = os.environ.get("LLM_MANAGER_PG_DB", "llmmanager")
     user = os.environ.get("LLM_MANAGER_PG_USER", "llmmanager")
-    pw = os.environ.get("LLM_MANAGER_PG_PASSWORD", "")
-    return psycopg2.connect(host=host, dbname=db, user=user, password=pw, connect_timeout=5)
+    pw = os.environ.get("LLM_MANAGER_PG_PASSWORD")
+    if pw is None:
+        # Same credential contract as the app (main.py _load_pg_pw): the
+        # PG_PW= line inside /etc/llm-manager/secrets/pg_app_creds. Keeping
+        # one source of truth means the transaction needs no duplicated
+        # secret env plumbing (plan §8).
+        pw_file = os.environ.get(
+            "LLM_MANAGER_PG_PW_FILE", "/etc/llm-manager/secrets/pg_app_creds")
+        try:
+            with open(pw_file) as f:
+                for line in f:
+                    if line.startswith("PG_PW="):
+                        pw = line.strip().split("=", 1)[1]
+                        break
+        except OSError:
+            pw = None
+    return psycopg2.connect(host=host, dbname=db, user=user, password=pw or "", connect_timeout=5)
 
 
 def ensure_ledger(cur):
