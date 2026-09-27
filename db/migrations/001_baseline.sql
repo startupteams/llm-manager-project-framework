@@ -1,0 +1,12 @@
+-- 001_baseline: establish the ledger baseline for VM114 production.
+--
+-- Production (VM114) already contains all schema objects: the 33-table capture in
+-- db/schema/schema.sql plus v011_core.MIGRATION_SQL objects (model_registry,
+-- recovery_events, request_routing_log, agent_keys, desired-state columns), applied
+-- idempotently at service startup since v0.11.
+--
+-- This migration is intentionally EMPTY of DDL: it only marks the existing live
+-- schema as baseline version 001 so future migrations can be ordered after it.
+-- Fresh installs (staging) apply schema.sql first, then migrations 001+; the ledger
+-- records both paths identically.
+SELECT 1;

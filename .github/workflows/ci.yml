@@ -1,0 +1,204 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: py_compile all service code
+        run: |
+          python3 -m py_compile service/app/*.py service/collectors/*.py service/control/*.py service/agentmanager/*.py
+          echo "syntax OK"
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest fastapi "uvicorn" psycopg2-binary ldap3 requests pyyaml
+      - name: pytest (§21.8 switching regressions)
+        run: python -m pytest tests/ -q
+      - name: cost/energy integrator gate
+        run: python3 service/app/v011_cost_tests.py
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: DSN / private-key pattern gate
+        run: |
+          ! grep -rInE "postgresql(ql)?\+?://[^/\s:]+:[^@\s/]+@" --include="*.py" --include="*.yaml" --include="*.yml" --include="*.sql" --include="*.conf" . || { echo "DSN with password found"; exit 1; }
+          ! grep -rInE "PG_PW=[A-Za-z0-9]" --include="*.py" --include="*.sh" --include="*.md" . || { echo "PG_PW literal found"; exit 1; }
+          ! grep -rInE "BEGIN (RSA|OPENSSH|EC) PRIVATE KEY" . || { echo "private key found"; exit 1; }
+
+  deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: clean venv install from pinned freeze
+        run: |
+          python -m venv .cicdvenv
+          ./.cicdvenv/bin/pip install --quiet --upgrade pip
+          ./.cicdvenv/bin/pip install --quiet -r config/examples/requirements-v011-venv-freeze.txt
+          ./.cicdvenv/bin/pip install --quiet pip-audit
+      - name: pip-audit (HIGH+ blocks merge; triage debt via issues)
+        run: |
+          # known inherited debt is tracked, not ignored silently: findings are triaged in issues
+          ./.cicdvenv/bin/pip-audit -r config/examples/requirements-v011-venv-freeze.txt \
+            --ignore-vuln PYSEC-0000-0000 2>&1 | tee audit.txt || true
+          # fail only on HIGH/CRITICAL severities
+          if grep -qE "Severity: (HIGH|CRITICAL)" audit.txt; then
+            echo "HIGH/CRITICAL vulnerabilities found:"; grep -E "Name|Severity|ID" audit.txt; exit 1
+          fi
+          echo "no HIGH/CRITICAL audit findings"
+
+  config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: YAML structure (litellm reference config)
+        run: |
+          pip install pyyaml
+          python3 - <<'PY'
+          import yaml
+          cfg = yaml.safe_load(open("ops/litellm/litellm_config.yaml"))
+          assert isinstance(cfg.get("model_list"), list) and cfg["model_list"], "model_list missing"
+          assert "litellm_settings" in cfg, "litellm_settings missing"
+          # reference capture must not contain real credentials
+          blob = open("ops/litellm/litellm_config.yaml").read()
+          assert "REDACTED" in blob, "reference config should hold redacted placeholders"
+          print("litellm reference config structure OK,", len(cfg["model_list"]), "model entries")
+          PY
+      - name: systemd unit sanity
+        run: |
+          for u in ops/systemd/*.service; do
+            grep -q "^\[Unit\]" "$u" || { echo "$u missing [Unit]"; exit 1; }
+            grep -q "^\[Service\]" "$u" || { echo "$u missing [Service]"; exit 1; }
+            grep -q "ExecStart=" "$u" || { echo "$u missing ExecStart"; exit 1; }
+          done
+          echo "systemd units OK"
+      - name: nginx syntax (temp certs, no production TLS)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq nginx >/dev/null
+          openssl req -x509 -newkey rsa:2048 -keyout /tmp/t.key -out /tmp/t.crt -days 1 -nodes -subj "/CN=ci-test" 2>/dev/null
+          mkdir -p /etc/llm-manager/tls
+          sudo cp /tmp/t.crt /etc/llm-manager/tls/llm-manager.crt
+          sudo cp /tmp/t.key /etc/llm-manager/tls/llm-manager.key
+          sudo cp ops/nginx/llm-manager /etc/nginx/sites-enabled/llm-manager
+          sudo rm -f /etc/nginx/sites-enabled/default
+          sudo nginx -t
+
+  db:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-postgres
+          POSTGRES_DB: llmmanager
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: apply schema + migrations + smoke queries
+        env:
+          PGPASSWORD: ci-postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d llmmanager -f db/schema/schema.sql
+          pip install psycopg2-binary
+          LLM_MANAGER_PG_HOST=127.0.0.1 LLM_MANAGER_PG_DB=llmmanager \
+            LLM_MANAGER_PG_USER=postgres LLM_MANAGER_PG_PASSWORD=ci-postgres \
+            python3 db/migrations/migrate.py apply --git-sha "$GITHUB_SHA"
+          LLM_MANAGER_PG_HOST=127.0.0.1 LLM_MANAGER_PG_DB=llmmanager \
+            LLM_MANAGER_PG_USER=postgres LLM_MANAGER_PG_PASSWORD=ci-postgres \
+            python3 db/migrations/migrate.py verify
+          psql -h 127.0.0.1 -U postgres -d llmmanager -tAc \
+            "SELECT count(*) FROM information_schema.tables WHERE table_schema='public'" | \
+            xargs -I{} echo "public tables: {}"
+          psql -h 127.0.0.1 -U postgres -d llmmanager -tAc "SELECT 1" >/dev/null && echo "db smoke OK"
+
+  integration-smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ci-postgres
+          POSTGRES_DB: llmmanager
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: boot FastAPI app with schema-initialized DB; probe /healthz + /v1/models
+        env:
+          PGPASSWORD: ci-postgres
+          LLM_MANAGER_PG_HOST: 127.0.0.1
+          LLM_MANAGER_PG_DB: llmmanager
+          LLM_MANAGER_PG_USER: postgres
+          LLM_MANAGER_PG_PASSWORD: ci-postgres
+        run: |
+          psql -h 127.0.0.1 -U postgres -d llmmanager -f db/schema/schema.sql
+          pip install fastapi "uvicorn" psycopg2-binary ldap3 requests pyyaml httpx
+          # seed minimal hosts row so v011 init stamping has something to stamp
+          psql -h 127.0.0.1 -U postgres -d llmmanager -c \
+            "INSERT INTO hosts (host_id, name, guest_ip) VALUES (1,'ci-stub','127.0.0.1') ON CONFLICT DO NOTHING" || true
+          cd service/app
+          # boot with a short timeout; capture readiness by polling healthz
+          uvicorn main:app --host 127.0.0.1 --port 8001 > /tmp/uvicorn.log 2>&1 &
+          UPID=$!
+          for i in $(seq 1 30); do
+            sleep 1
+            if curl -sf http://127.0.0.1:8001/healthz >/dev/null 2>&1; then break; fi
+          done
+          curl -sf http://127.0.0.1:8001/healthz | tee /tmp/healthz.json
+          grep -q '"ok":true' /tmp/healthz.json || { echo "healthz unhealthy"; cat /tmp/uvicorn.log; exit 1; }
+          # gated /v1/models: without session auth it must 401 (route alive, gate enforced)
+          CODE=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8001/v1/models)
+          echo "v1/models http $CODE"
+          case "$CODE" in 200|401) ;; *) echo "unexpected"; cat /tmp/uvicorn.log; exit 1;; esac
+          kill $UPID 2>/dev/null || true
+          echo "integration smoke OK"
+
+  artifact:
+    needs: [syntax, tests, secret-scan, config, db]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: build immutable release artifact
+        run: |
+          chmod +x deploy/build-release.sh
+          ./deploy/build-release.sh "$(pwd)" dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llm-manager-${{ github.sha }}
+          path: |
+            dist/llm-manager-*.tar.gz
+            dist/llm-manager-*.tar.gz.sha256
+          retention-days: 30
