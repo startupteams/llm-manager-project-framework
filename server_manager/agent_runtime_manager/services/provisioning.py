@@ -80,6 +80,7 @@ class ProvisioningService:
             ownership_meta={"bridge_profile": req.bridge_profile or {}},
         )
         session.add(runtime)
+        session.flush()  # assign runtime.runtime_id (Python-side default) before FK use
         job = ProvisioningJob(
             request_id=req.request_id,
             runtime_id=runtime.runtime_id,
@@ -123,15 +124,30 @@ class ProvisioningService:
     # -------------------------------------------------------------- steps
     def _step(self, session: SASession, job: ProvisioningJob, seq: int, step: str, state: str = "RUNNING",
               detail: str | None = None) -> None:
-        row = ProvisioningStep(job_id=job.job_id, seq=seq, step=step, state=state, detail=detail)
-        session.add(row)
+        # A step is recorded twice per sequence number (start + terminal update).
+        # Upsert on (job_id, seq) so the terminal update replaces the RUNNING row
+        # instead of violating uq_provstep_job_seq.
+        existing = session.execute(
+            select(ProvisioningStep).where(
+                ProvisioningStep.job_id == job.job_id, ProvisioningStep.seq == seq
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing.step = step
+            existing.state = state
+            existing.detail = detail
+        else:
+            session.add(ProvisioningStep(job_id=job.job_id, seq=seq, step=step,
+                                         state=state, detail=detail))
         session.commit()
+
 
     def _provision_vm(self, session: SASession, job: ProvisioningJob, runtime: AgentRuntime) -> tuple[int, str]:
         s = get_settings()
         self._step(session, job, 1, "VALIDATING")
         if runtime.acms_agent_id in ("", None):
             raise ValueError("acms_agent_id required (§9)")
+        self._step(session, job, 1, "VALIDATING", "DONE")
         self._step(session, job, 2, "RESERVING", "DONE")
         self._step(session, job, 3, "CLONING_VM")
         vmid = self.provider.next_vmid()
@@ -147,11 +163,11 @@ class ProvisioningService:
         self.provider.wait_clone_lock_release(node, vmid)
         session.add(RuntimeEvent(actor="arm", action="vm_cloned", runtime_id=runtime.runtime_id,
                                  detail={"vmid": vmid, "node": node, "template": spec.template_vmid}))
-        self._step(session, job, 3, "DONE")
+        self._step(session, job, 3, "CLONING_VM", "DONE")
 
         self._step(session, job, 4, "CONFIGURING_CLOUD_INIT")
         self.provider.configure_cloud_init(spec, vmid)
-        self._step(session, job, 4, "DONE")
+        self._step(session, job, 4, "CONFIGURING_CLOUD_INIT", "DONE")
 
         self._step(session, job, 5, "BOOTING")
         self.provider.start(node, vmid)
@@ -159,7 +175,7 @@ class ProvisioningService:
         if not ip:
             raise RuntimeError("no guest IP after boot (420s)")
         runtime.ownership_meta["ip"] = ip
-        self._step(session, job, 5, "DONE", detail=ip)
+        self._step(session, job, 5, "BOOTING", "DONE", detail=ip)
         return vmid, node
 
     def _bootstrap_hermes(self, session: SASession, job: ProvisioningJob, runtime: AgentRuntime,
@@ -187,11 +203,11 @@ class ProvisioningService:
             acms_agent_id=runtime.acms_agent_id,
             bridge_credential_id=runtime.ownership_meta["bridge_credential_id"],
         ))
-        self._step(session, job, 7, "DONE")
+        self._step(session, job, 7, "INJECTING_BRIDGE_CONFIG", "DONE")
 
         # §10A state backup fields are filled by the hermes_bootstrap module
         self._step(session, job, 8, "HERMES_STATE_BRANCH")
         runtime.hermes_state_repo = "startupteams/hermes-base-setup"
         runtime.hermes_state_branch = f"agent/{runtime.acms_agent_id[:8]}"
         runtime.state_sync_health = "PENDING"
-        self._step(session, job, 8, "DONE", detail=runtime.hermes_state_branch)
+        self._step(session, job, 8, "HERMES_STATE_BRANCH", "DONE", detail=runtime.hermes_state_branch)

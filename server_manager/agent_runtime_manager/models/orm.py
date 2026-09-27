@@ -25,6 +25,7 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -83,10 +84,13 @@ class AgentRuntime(Base):
     actual_state: Mapped[ActualState] = mapped_column(Enum(ActualState, name="arm_runtime_actual_state"),
                                                       default=ActualState.ABSENT)
 
-    # §8 ownership metadata — REQUIRED before any destructive action
+    # §8 ownership metadata — REQUIRED before any destructive action.
+    # MutableDict: the service mutates this dict in place; without mutation
+    # tracking SQLAlchemy never flags the attribute dirty and the mutations
+    # are silently dropped on commit.
     created_by_agent_runtime_manager: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     template_source: Mapped[str | None] = mapped_column(String(120), nullable=True)
-    ownership_meta: Mapped[dict] = mapped_column(JSONB, default=dict)
+    ownership_meta: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB), default=dict)
 
     # §10A Hermes state backup metadata
     hermes_state_repo: Mapped[str | None] = mapped_column(String(120), nullable=True)

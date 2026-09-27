@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -31,6 +31,17 @@ from server_manager.common.auth.service_tokens import require_identity
 from server_manager.common.db.session import get_session_factory
 
 router = APIRouter(prefix="/api/v1", tags=["server-manager-v1"])
+
+from server_manager.common.auth.service_tokens import ServiceIdentity  # noqa: E402
+
+
+def _auth(scope: str):
+    """Dependency factory: identity check runs BEFORE body validation (401-first)."""
+    def dep(request: Request) -> ServiceIdentity:
+        return require_identity(request, scope)
+    return dep
+
+
 
 API_CONTRACT_VERSION = "1.0.0"
 
@@ -102,8 +113,7 @@ def _runtime_out(r: AgentRuntime) -> RuntimeOut:
 
 # ----------------------------------------------------------------- endpoints
 @router.post("/agent-runtimes", status_code=202)
-def create_agent_runtime(body: CreateRuntimeRequest, request: Request):
-    ident = require_identity(request, "runtime:write")
+def create_agent_runtime(body: CreateRuntimeRequest, ident: ServiceIdentity = Depends(_auth("runtime:write"))):
     Session = get_session_factory("arm")
     svc = ProvisioningService()
     with Session() as session:
@@ -126,8 +136,7 @@ def create_agent_runtime(body: CreateRuntimeRequest, request: Request):
 
 
 @router.get("/provisioning-jobs/{job_id}")
-def get_provisioning_job(job_id: str, request: Request):
-    require_identity(request, "job:read")
+def get_provisioning_job(job_id: str, ident: ServiceIdentity = Depends(_auth("job:read"))):
     Session = get_session_factory("arm")
     with Session() as session:
         job = session.get(ProvisioningJob, uuid.UUID(job_id))
@@ -141,8 +150,7 @@ def get_provisioning_job(job_id: str, request: Request):
 
 
 @router.get("/agent-runtimes/{runtime_id}")
-def get_agent_runtime(runtime_id: str, request: Request):
-    require_identity(request, "runtime:read")
+def get_agent_runtime(runtime_id: str, ident: ServiceIdentity = Depends(_auth("runtime:read"))):
     Session = get_session_factory("arm")
     with Session() as session:
         r = session.get(AgentRuntime, uuid.UUID(runtime_id))
@@ -152,8 +160,7 @@ def get_agent_runtime(runtime_id: str, request: Request):
 
 
 @router.get("/agent-runtimes")
-def list_agent_runtimes(request: Request, acms_agent_id: str | None = None):
-    require_identity(request, "runtime:read")
+def list_agent_runtimes(ident: ServiceIdentity = Depends(_auth("runtime:read")), acms_agent_id: str | None = None):
     Session = get_session_factory("arm")
     with Session() as session:
         q = select(AgentRuntime)
@@ -164,8 +171,7 @@ def list_agent_runtimes(request: Request, acms_agent_id: str | None = None):
 
 
 @router.post("/agent-runtimes/{runtime_id}/desired-state")
-def set_desired_state(runtime_id: str, body: DesiredStateRequest, request: Request):
-    ident = require_identity(request, "runtime:write")
+def set_desired_state(runtime_id: str, body: DesiredStateRequest, ident: ServiceIdentity = Depends(_auth("runtime:write"))):
     Session = get_session_factory("arm")
     with Session() as session:
         r = session.get(AgentRuntime, uuid.UUID(runtime_id))
@@ -182,10 +188,9 @@ def set_desired_state(runtime_id: str, body: DesiredStateRequest, request: Reque
 
 
 @router.delete("/agent-runtimes/{runtime_id}", status_code=200)
-def destroy_agent_runtime(runtime_id: str, request: Request):
+def destroy_agent_runtime(runtime_id: str, ident: ServiceIdentity = Depends(_auth("runtime:destroy"))):
     """Destroy a Runtime-Manager-owned runtime VM (§8). NEVER deletes ACMS
     persistent agent identity/history."""
-    ident = require_identity(request, "runtime:destroy")
     s = __import__("server_manager.common.config.settings", fromlist=["get_settings"]).get_settings()
     Session = get_session_factory("arm")
     provider = ProxmoxVMProvider()
@@ -220,8 +225,7 @@ def destroy_agent_runtime(runtime_id: str, request: Request):
 
 
 @router.get("/capabilities")
-def capabilities(request: Request):
-    require_identity(request, "health:read")
+def capabilities(ident: ServiceIdentity = Depends(_auth("health:read"))):
     return {
         "api": "server-manager", "api_contract_version": API_CONTRACT_VERSION,
         "endpoints": [
