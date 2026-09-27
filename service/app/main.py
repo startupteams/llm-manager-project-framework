@@ -338,7 +338,44 @@ def _is_active_ip(ip):
 
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "version": APP_VERSION}
+    """Build identity per plan §17: version + git_sha + build_time + schema_version.
+    release_manifest.json ships in every release tree; absent values show unknown."""
+    manifest = {}
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "..", "release_manifest.json")) as f:
+            manifest = json.load(f)
+    except Exception:
+        try:
+            with open("/opt/llm-manager/current/release_manifest.json") as f:
+                manifest = json.load(f)
+        except Exception:
+            pass
+    return {
+        "ok": True,
+        "version": APP_VERSION,
+        "git_sha": manifest.get("git_sha", "unknown"),
+        "build_time": manifest.get("build_time", "unknown"),
+        "schema_version": _schema_version(),
+    }
+
+
+def _schema_version():
+    try:
+        conn = _pg()
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT MAX(version) FROM schema_migrations")
+                    row = cur.fetchone()
+                    return row[0] if row and row[0] else "000"
+            except Exception:
+                return "unknown"
+            finally:
+                conn.close()
+    except Exception:
+        pass
+    return "unknown"
 
 
 @app.get("/api/status")
