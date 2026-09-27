@@ -41,7 +41,7 @@ esac
 
 # 4. history + benchmark APIs exist (401 without auth means the route is alive;
 #    404 tolerated — route inventory varies by release, absence is not a deploy failure)
-for path in /api/history/revisions /api/benchmarks; do
+for path in /api/history/revisions /api/history/benchmarks; do
     CODE="$(curl -sk --max-time 8 -o /dev/null -w '%{http_code}' "https://127.0.0.1$path" -H 'Host: llm-manager.marion-ia-usa.internal' 2>/dev/null || true)"
     case "$CODE" in
         200|401|403|404) ok "$path route alive (http $CODE)" ;;
