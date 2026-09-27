@@ -64,7 +64,7 @@ jobs:
           MAN_SHA=$(tar -xzOf "$ART" --wildcards '*/release_manifest.json' | python3 -c 'import json,sys;print(json.load(sys.stdin)["git_sha"])')
           echo "artifact git_sha: $MAN_SHA"
           case "$MAN_SHA" in "${{ inputs.git_sha }}"*) ;; *) echo "SHA MISMATCH"; exit 1;; esac
-          echo "ARTIFACT=$ART" >> "$GITHUB_ENV"
+          echo "ARTIFACT=$(readlink -f "$ART")" >> "$GITHUB_ENV"
 
       - name: Transfer to VM114
         run: scp "$ARTIFACT" "$ARTIFACT.sha256" llm-manager-deploy@10.0.20.108:/tmp/
@@ -74,7 +74,10 @@ jobs:
         run: |
           ssh llm-manager-deploy@10.0.20.108 "bash -s" <<'REMOTE'
           set -euo pipefail
-          ART=$(ls /tmp/llm-manager-*.tar.gz | head -1)
+          ART=$(ls -t /tmp/llm-manager-*.tar.gz | head -1)
+          # First promotion of the flat layout is auto-detected inside
+          # deploy-release.sh (LLM_MANAGER_FIRST_PROMOTION); preflight's
+          # missing-current check downgrades to a WARN for that one transaction.
           sudo /opt/llm-manager-deploy/deploy-wrapper.sh "$ART"
           REMOTE
 
