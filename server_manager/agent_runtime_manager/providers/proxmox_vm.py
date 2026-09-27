@@ -49,7 +49,8 @@ class ProxmoxVMProvider:
         s = get_settings()
         self.api_url = (api_url or s.pve_api_url or os_env("SERVER_MANAGER_PVE_URL", "")).rstrip("/")
         self.token_id = token_id or s.pve_token_id or os_env("SERVER_MANAGER_PVE_TOKEN_ID", "")
-        self.token_secret = token_secret or os_env("SERVER_MANAGER_PVE_TOKEN_SECRET", "")
+        self.token_secret = (token_secret or os_env("SERVER_MANAGER_PVE_TOKEN_SECRET", "")
+                             or _read_pve_secret())
         self.verify_tls = verify_tls
         self._ctx = ssl.create_default_context()
         if not verify_tls:
@@ -161,6 +162,18 @@ def os_env(key: str, default: str) -> str:
     import os
 
     return os.environ.get(key, default)
+
+
+def _read_pve_secret() -> str:
+    """Read the PVE token secret from the same root-only file the app/recovery use."""
+    import os
+
+    path = os.environ.get("SERVER_MANAGER_PVE_SECRET_FILE", "/etc/llm-manager/secrets/pve_token")
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
 
 
 # ---------------------------------------------------------------------------
