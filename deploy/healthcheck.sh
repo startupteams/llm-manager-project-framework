@@ -7,9 +7,17 @@ FAIL=0
 ok()   { echo "  PASS: $1"; }
 fail() { echo "  FAIL: $1"; FAIL=1; }
 
-# 1. relevant services active
+# 1. relevant services active — with bounded wait (services may still be starting)
+wait_unit() {
+    local unit="$1" tries="${2:-10}"
+    for _ in $(seq 1 "$tries"); do
+        systemctl is-active --quiet "$unit" && return 0
+        sleep 3
+    done
+    return 1
+}
 for unit in llm-manager-web llm-manager-collector llm-manager-emporia llm-manager-recovery; do
-    systemctl is-active --quiet "$unit" && ok "$unit active" || fail "$unit not active"
+    wait_unit "$unit" 10 && ok "$unit active" || fail "$unit not active"
 done
 # litellm: staging always; prod checked but soft (restart-deferral policy §15)
 if systemctl is-active --quiet litellm; then ok "litellm active"; else
