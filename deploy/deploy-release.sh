@@ -118,16 +118,18 @@ echo "  candidate validation passed"
 # ---- Phase F: migrations -----------------------------------------------------------
 if [ "$SKIP_MIG" = "0" ] && [ -d "$REL_DST/db/migrations" ]; then
     echo "==> migrations"
-    # DB target: environment > web-unit drop-in > local default. NO prod IP default
-    # (plan §8 — a hard-coded prod endpoint in CD tooling is an isolation violation).
+    # DB target resolution is INSIDE migrate.py: env override > pg_app_creds file
+    # (PG_HOST/PG_DB/PG_USER/PG_PW) > local default. Do NOT pre-set env vars here
+    # with defaults — an exported 127.0.0.1 would defeat migrate.py's file contract
+    # (the first production promotion hit exactly that). Only values the operator
+    # explicitly exported before the transaction reach migrate.py as env.
     UNIT_ENV="$(systemctl show llm-manager-web -p Environment --value 2>/dev/null || true)"
     UNIT_HOST="$(echo "$UNIT_ENV" | tr ' ' '\n' | sed -n 's/^LLM_MANAGER_PG_HOST=//p' | head -1)"
     UNIT_USER="$(echo "$UNIT_ENV" | tr ' ' '\n' | sed -n 's/^LLM_MANAGER_PG_USER=//p' | head -1)"
     UNIT_PW="$(echo "$UNIT_ENV" | tr ' ' '\n' | sed -n 's/^LLM_MANAGER_PG_PASSWORD=//p' | head -1)"
-    LLM_MANAGER_PG_HOST="${LLM_MANAGER_PG_HOST:-${UNIT_HOST:-127.0.0.1}}" \
-    LLM_MANAGER_PG_DB="${LLM_MANAGER_PG_DB:-llmmanager}" \
-    LLM_MANAGER_PG_USER="${LLM_MANAGER_PG_USER:-${UNIT_USER:-llmmanager}}" \
-    LLM_MANAGER_PG_PASSWORD="${LLM_MANAGER_PG_PASSWORD:-${UNIT_PW:-}}" \
+    [ -n "$UNIT_HOST" ] && export LLM_MANAGER_PG_HOST="$UNIT_HOST"
+    [ -n "$UNIT_USER" ] && export LLM_MANAGER_PG_USER="$UNIT_USER"
+    [ -n "$UNIT_PW" ] && export LLM_MANAGER_PG_PASSWORD="$UNIT_PW"
     "$VENV/bin/python" "$REL_DST/db/migrations/migrate.py" apply --git-sha "$REL_SHA" \
         || { echo "migrations failed — rolling back candidate install"; rm -rf "$REL_DST"; die "migration failure"; }
 else
