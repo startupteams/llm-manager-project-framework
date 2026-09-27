@@ -30,8 +30,12 @@ def get_engine(db: str = "arm") -> Engine:
         url = _make_url(s.arm_pg_host, s.arm_pg_port, s.arm_pg_db, s.arm_pg_user, s.arm_pg_password)
     elif db == "llm":
         url = _make_url(s.llm_pg_host, s.llm_pg_port, s.llm_pg_db, s.llm_pg_user, s.llm_pg_password)
+    elif db == "litellm":
+        # LiteLLM proxy's own DB (SpendLogs). Same PG host, same app role (pg_app_creds),
+        # separate logical database per the existing app's own dual-DSN pattern (main.py:609).
+        url = _make_url(s.llm_pg_host, s.llm_pg_port, "litellm", s.llm_pg_user, s.llm_pg_password)
     else:
-        raise ValueError(f"unknown logical db {db!r} (use 'arm' or 'llm')")
+        raise ValueError(f"unknown logical db {db!r} (use 'arm', 'llm', or 'litellm')")
     eng = create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=5, future=True)
     _engines[db] = eng
     return eng

@@ -41,7 +41,7 @@ def usage(request: Request, hours: int = 24):
     require_identity(request, "usage:read")
     if hours < 1 or hours > 24 * 30:
         raise HTTPException(status_code=422, detail="hours must be 1..720")
-    Session = get_session_factory("llm")
+    Session = get_session_factory("litellm")
     with Session() as session:
         from sqlalchemy import text
 
