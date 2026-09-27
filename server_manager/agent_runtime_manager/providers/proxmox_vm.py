@@ -83,15 +83,36 @@ class ProxmoxVMProvider:
                    {"newid": new_vmid, "name": spec.name[:63], "full": 1, "target": spec.template_node}, timeout=600)
 
     def wait_clone_lock_release(self, node: str, vmid: int, max_s: int = 240) -> None:
-        deadline = time.time() + max_s
-        while time.time() < deadline:
-            cfg = self.vm_config(node, vmid) or {}
-            if not cfg.get("lock"):
-                return
-            time.sleep(2)
-        raise RuntimeError(f"clone lock still held on {node}/{vmid}")
+        """Wait for the post-clone lock release.
 
-    def configure_cloud_init(self, spec: VMSpec, vmid: int, extra: dict | None = None) -> None:
+        During the clone the config read FAILS (PVE 500 'VM is locked (clone)') —
+        a failed read is NOT lock-free; keep waiting (found live: the configure
+        step raced the clone and orphaned a VM).
+        """
+        deadline = time.time() + max_s
+        saw_config = False
+        while time.time() < deadline:
+            try:
+                cfg = self._call("GET", f"/nodes/{node}/qemu/{vmid}/config") or {}
+                saw_config = True
+            except Exception:
+                saw_config = False
+                cfg = {}
+            if saw_config and not cfg.get("lock"):
+                return
+            time.sleep(3)
+        raise RuntimeError(f"clone lock still held on {node}/{vmid} after {max_s}s")
+
+    def configure_cloud_init(self, spec: VMSpec, vmid: int, extra: dict | None = None,
+                             retries: int = 3) -> None:
+        # Lock guard: refuse to configure a locked VM (clone race guard, found live)
+        for _ in range(retries):
+            cfg = self.vm_config(spec.node, vmid)
+            if not cfg.get("lock"):
+                break
+            time.sleep(3)
+        else:
+            raise RuntimeError(f"VM {vmid} still locked before configure")
         body = {
             "net0": f"virtio,bridge={spec.bridge}",
             "ipconfig0": f"ip={spec.ip_mode}",
