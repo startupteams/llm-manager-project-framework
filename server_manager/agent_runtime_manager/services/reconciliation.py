@@ -49,6 +49,7 @@ class ReconcileSettings:
     backoff_cap_s: int = 120
     bridge_wait_s: int = 300
     poll_interval_s: int = 60
+    shutdown_wait_s: int = 30
 
     @classmethod
     def from_env(cls) -> "ReconcileSettings":
@@ -66,6 +67,7 @@ class ReconcileSettings:
             backoff_cap_s=_i("ARM_RECONCILE_BACKOFF_CAP_S", 120),
             bridge_wait_s=_i("ARM_RECONCILE_BRIDGE_WAIT_S", 300),
             poll_interval_s=_i("ARM_RECONCILE_POLL_S", 60),
+            shutdown_wait_s=_i("ARM_RECONCILE_SHUTDOWN_WAIT_S", 30),
         )
 
 
@@ -102,6 +104,15 @@ class ReconciliationService:
         except Exception as e:  # noqa: BLE001 — PVE unreachable is a recorded condition
             log.warning("pve state read failed for %s/%s: %s", node, vmid, e)
             return "unknown"
+
+    def _wait_pve_state(self, node: str | None, vmid: int | None, expect: str, max_s: int = 30) -> str:
+        """Bounded poll for a PVE state transition (async state flips lag the API ack)."""
+        deadline = time.time() + max_s
+        state = self._pve_vm_state(node, vmid)
+        while state != expect and time.time() < deadline:
+            time.sleep(3)
+            state = self._pve_vm_state(node, vmid)
+        return state
 
     def _verify_owned(self, session: SASession, r: AgentRuntime) -> None:
         """Fail-closed ownership verification before ANY state-changing action."""
@@ -219,7 +230,7 @@ class ReconciliationService:
         self._verify_owned(session, r)
         self._audit(session, r, "reconcile_shutdown", "ok", {"node": r.node, "vmid": r.vmid})
         self.provider.shutdown(r.node, r.vmid)  # escalates to forced stop internally on timeout
-        after = self._pve_vm_state(r.node, r.vmid)
+        after = self._wait_pve_state(r.node, r.vmid, "stopped", max_s=self.settings.shutdown_wait_s)
         if after == "stopped":
             r.actual_state = ActualState.STOPPED
             r.recovery_count = 0

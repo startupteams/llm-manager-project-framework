@@ -82,7 +82,7 @@ class ReconcileFakeProvider:
 
 def make_settings(**kw) -> ReconcileSettings:
     d = dict(max_recovery_attempts=3, backoff_base_s=0, backoff_cap_s=0,
-             bridge_wait_s=1, poll_interval_s=1)
+             bridge_wait_s=1, poll_interval_s=1, shutdown_wait_s=0)
     d.update(kw)
     return ReconcileSettings(**d)
 
