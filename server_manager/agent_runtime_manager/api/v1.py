@@ -7,6 +7,7 @@ runtimes (§8) and never means "delete ACMS persistent agent".
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -210,6 +211,58 @@ def set_desired_state(runtime_id: str, body: DesiredStateRequest, ident: Service
             raise HTTPException(status_code=422, detail=f"unknown desired state {body.desired_state}")
         session.add(RuntimeEvent(actor=ident.service, action="desired_state_set", runtime_id=r.runtime_id,
                                  detail={"desired": body.desired_state, "reason": body.reason}))
+        session.commit()
+        return _runtime_out(r)
+
+
+class SupersedeRequest(BaseModel):
+    superseded_by_runtime_id: str
+    reason: str | None = None
+
+
+@router.post("/agent-runtimes/{runtime_id}/supersede")
+def supersede_agent_runtime(runtime_id: str, body: SupersedeRequest,
+                            ident: ServiceIdentity = Depends(_auth("runtime:write"))):
+    """Mark a runtime row SUPERSEDED — historical evidence of a failed
+    provisioning attempt, linked to the live runtime that eventually succeeded.
+
+    Evidence-preserving: no deletion, no PVE call, no VM operation. Refuses rows
+    that have a backing VM (node+vmid set) or are RUNNING — only failed
+    attempts with no provisioned resources qualify. Never reconciled afterward.
+    """
+    Session = get_session_factory("arm")
+    with Session() as session:
+        r = session.get(AgentRuntime, uuid.UUID(runtime_id))
+        if r is None:
+            raise HTTPException(status_code=404, detail="runtime not found")
+        try:
+            live = session.get(AgentRuntime, uuid.UUID(body.superseded_by_runtime_id))
+        except ValueError:
+            raise HTTPException(status_code=422, detail="superseded_by_runtime_id is not a UUID")
+        if live is None:
+            raise HTTPException(status_code=404, detail="superseded_by runtime not found")
+        if r.runtime_id == live.runtime_id:
+            raise HTTPException(status_code=422, detail="a runtime cannot supersede itself")
+        if r.actual_state == ActualState.SUPERSEDED:
+            raise HTTPException(status_code=409, detail="runtime already SUPERSEDED")
+        if r.vmid is not None or r.node is not None:
+            raise HTTPException(status_code=409,
+                                detail="refusing to supersede a runtime with backing resources (node/vmid set)")
+        if r.actual_state == ActualState.RUNNING:
+            raise HTTPException(status_code=409, detail="refusing to supersede a RUNNING runtime")
+
+        r.actual_state = ActualState.SUPERSEDED
+        if r.ownership_meta is None:
+            r.ownership_meta = {}
+        r.ownership_meta["superseded_by_runtime_id"] = str(live.runtime_id)
+        r.ownership_meta["superseded_by_request"] = live.provisioning_request_id
+        r.ownership_meta["superseded_at"] = datetime.now(timezone.utc).isoformat()
+        r.ownership_meta["superseded_reason"] = body.reason
+
+        session.add(RuntimeEvent(actor=ident.service, action="runtime_superseded", runtime_id=r.runtime_id,
+                                 detail={"superseded_by": str(live.runtime_id),
+                                         "previous_state": ActualState.ERROR.value,
+                                         "reason": body.reason}))
         session.commit()
         return _runtime_out(r)
 
