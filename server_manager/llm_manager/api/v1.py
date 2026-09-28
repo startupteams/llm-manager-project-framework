@@ -68,18 +68,27 @@ def usage(request: Request, hours: int = 24):
 @router.get("/hosts")
 def list_hosts(request: Request):
     require_identity(request, "route:read")
-    from server_manager.llm_manager.models.orm import ActiveHostRecord, HostRecord
+    from server_manager.llm_manager.models.orm import ActiveHostRecord as ActiveRecord
+    from server_manager.llm_manager.models.orm import HostRecord
 
     Session = get_session_factory("llm")
     with Session() as session:
         hosts = session.query(HostRecord).order_by(HostRecord.host_id).all()
-        active = {a.physical_host: a.active_host_ip for a in session.query(ActiveHostRecord).all()}
+        active = {a.physical_host: a.active_host_ip for a in session.query(ActiveRecord).all()}
+        # hosts.name carries a VM suffix ('MIAM-00111 / VM102 (Flash-Next PROD)');
+        # active_hosts keys are the bare MIAM-##### asset id → match on the first token.
+        import re as _re
+
+        def _asset(name: str) -> str | None:
+            m = _re.match(r"(MIAM-\d{5})", name or "")
+            return m.group(1) if m else None
+
         return {"api_contract_version": API_CONTRACT_VERSION, "hosts": [
             {"host_id": h.host_id, "name": h.name, "guest_ip": h.guest_ip,
              "gpu_count": h.gpu_count, "gpu_model": h.gpu_model, "node": h.node,
              "vmid": h.vmid, "desired_power_state": h.desired_power_state,
              "desired_service_state": h.desired_service_state,
-             "active_model_host": active.get(h.name)}
+             "active_model_host": active.get(_asset(h.name))}
             for h in hosts
         ], "active_hosts": [{"physical_host": k, "active_host_ip": v} for k, v in active.items()]}
 
