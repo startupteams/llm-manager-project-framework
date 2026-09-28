@@ -25,6 +25,10 @@ app = FastAPI(
 app.include_router(arm_router)
 app.include_router(llm_router)
 
+from server_manager.llm_manager.api.pdu_routes import router as pdu_router  # noqa: E402
+
+app.include_router(pdu_router)
+
 
 @app.get("/healthz")
 def healthz():
