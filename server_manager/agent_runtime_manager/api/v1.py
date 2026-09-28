@@ -64,6 +64,27 @@ class DesiredStateRequest(BaseModel):
     reason: str = Field(min_length=4)
 
 
+class ReconcileOut(BaseModel):
+    runtime_id: str
+    desired: str
+    before: str
+    after: str
+    action: str
+    error: str | None = None
+    detail: dict[str, Any] = Field(default_factory=dict)
+
+
+class StateSyncReport(BaseModel):
+    runtime_id: str
+    hermes_state_repo: str | None
+    hermes_state_branch: str | None
+    hermes_profile_name: str | None
+    last_state_commit_sha: str | None
+    state_sync_health: str | None
+    reported_by: str
+    observed_at: str
+
+
 class RuntimeOut(BaseModel):
     runtime_id: str
     acms_agent_id: str
@@ -84,6 +105,9 @@ class RuntimeOut(BaseModel):
     hermes_profile_name: str | None
     last_state_commit_sha: str | None
     state_sync_health: str | None
+    last_reconcile_at: str | None
+    last_error: str | None
+    recovery_count: int
     api_contract_version: str = API_CONTRACT_VERSION
 
 
@@ -108,6 +132,9 @@ def _runtime_out(r: AgentRuntime) -> RuntimeOut:
         hermes_state_repo=r.hermes_state_repo, hermes_state_branch=r.hermes_state_branch,
         hermes_profile_name=r.hermes_profile_name, last_state_commit_sha=r.last_state_commit_sha,
         state_sync_health=r.state_sync_health,
+        last_reconcile_at=r.last_reconcile_at.isoformat() if r.last_reconcile_at else None,
+        last_error=r.last_error,
+        recovery_count=r.recovery_count or 0,
     )
 
 
@@ -232,9 +259,74 @@ def capabilities(ident: ServiceIdentity = Depends(_auth("health:read"))):
             "POST /api/v1/agent-runtimes", "GET /api/v1/provisioning-jobs/{job_id}",
             "GET /api/v1/agent-runtimes/{runtime_id}", "GET /api/v1/agent-runtimes",
             "POST /api/v1/agent-runtimes/{runtime_id}/desired-state",
+            "POST /api/v1/agent-runtimes/{runtime_id}/reconcile",
+            "POST /api/v1/agent-runtimes/{runtime_id}/state-sync",
             "DELETE /api/v1/agent-runtimes/{runtime_id}",
             "GET /api/v1/model-routes/{route}", "GET /api/v1/usage",
         ],
         "provider": "proxmox_vm",
         "destroy_policy": "ownership-verified Runtime-Manager-created VMs only (§8)",
     }
+
+
+# ----------------------------------------------------------------- reconciler
+@router.post("/agent-runtimes/{runtime_id}/reconcile")
+def reconcile_runtime(runtime_id: str, ident: ServiceIdentity = Depends(_auth("runtime:write"))):
+    """Execute desired state for one runtime NOW (§10B). Safe: ownership-verified,
+    bounded retries, audited; never destroys."""
+    from server_manager.agent_runtime_manager.services.reconciliation import ReconciliationService
+
+    Session = get_session_factory("arm")
+    svc = ReconciliationService()
+    with Session() as session:
+        res = svc.reconcile_runtime(session, uuid.UUID(runtime_id))
+        session.commit()
+        return ReconcileOut(
+            runtime_id=res.runtime_id, desired=res.desired, before=res.before,
+            after=res.after, action=res.action, error=res.error, detail=res.detail,
+        ).model_dump()
+
+
+@router.post("/reconcile")
+def reconcile_all(ident: ServiceIdentity = Depends(_auth("runtime:write"))):
+    """One reconcile pass over all ARM-owned runtimes (§10B). Single-replica by
+    deployment discipline (single uvicorn worker); concurrent callers are
+    serialized by row-level commits."""
+    from server_manager.agent_runtime_manager.services.reconciliation import ReconciliationService
+
+    Session = get_session_factory("arm")
+    svc = ReconciliationService()
+    with Session() as session:
+        results = svc.reconcile_all(session)
+        session.commit()
+        return {"results": [ReconcileOut(
+            runtime_id=x.runtime_id, desired=x.desired, before=x.before,
+            after=x.after, action=x.action, error=x.error, detail=x.detail,
+        ).model_dump() for x in results], "count": len(results)}
+
+
+# ----------------------------------------------------------------- state sync
+@router.post("/agent-runtimes/{runtime_id}/state-sync")
+def report_state_sync(runtime_id: str, body: StateSyncReport, ident: ServiceIdentity = Depends(_auth("runtime:write"))):
+    """Record Hermes state-backup health (§10A): branch, last commit SHA, health.
+
+    Called by the worker's state-sync path (or its supervisor) after a push.
+    Health vocabulary: PENDING | SYNCING | VERIFIED | STALE | FAILED.
+    """
+    Session = get_session_factory("arm")
+    with Session() as session:
+        r = session.get(AgentRuntime, uuid.UUID(runtime_id))
+        if r is None:
+            raise HTTPException(status_code=404, detail="runtime not found")
+        if body.runtime_id and body.runtime_id != runtime_id:
+            raise HTTPException(status_code=422, detail="runtime_id mismatch")
+        r.hermes_state_repo = body.hermes_state_repo or r.hermes_state_repo
+        r.hermes_state_branch = body.hermes_state_branch or r.hermes_state_branch
+        r.hermes_profile_name = body.hermes_profile_name or r.hermes_profile_name
+        r.last_state_commit_sha = body.last_state_commit_sha
+        r.state_sync_health = body.state_sync_health or "VERIFIED"
+        session.add(RuntimeEvent(actor=ident.service, action="state_sync_reported", runtime_id=r.runtime_id,
+                                 detail={"sha": body.last_state_commit_sha, "branch": r.hermes_state_branch,
+                                         "health": r.state_sync_health}))
+        session.commit()
+        return _runtime_out(r)
