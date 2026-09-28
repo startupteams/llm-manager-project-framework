@@ -134,6 +134,17 @@ class ReconciliationService:
                                    action="error", error="runtime not found")
         before = r.actual_state.value if r.actual_state else ActualState.ABSENT.value
         desired = r.desired_state
+
+        # SUPERSEDED rows are historical evidence (failed provisioning attempts
+        # linked to a live retry) — evidence-preserving, never reconciled, never
+        # flipped back by PVE truth-correction.
+        if r.actual_state == ActualState.SUPERSEDED:
+            res = ReconcileResult(runtime_id=str(r.runtime_id), desired=desired.value, before=before,
+                                  after=before, action="noop",
+                                  detail={"note": "superseded rows are historical; reconciler skips"})
+            self._record(session, r, res)
+            return res
+
         pve = self._pve_vm_state(r.node, r.vmid)
 
         # desired DESTROYED is handled only by the explicit API destroy path (§8);

@@ -50,6 +50,7 @@ class ActualState(str, enum.Enum):
     STOPPED = "STOPPED"
     ERROR = "ERROR"
     DESTROYED = "DESTROYED"
+    SUPERSEDED = "SUPERSEDED"    # historical failed attempt; superseded by a live runtime (never reconciled)
 
 
 class JobState(str, enum.Enum):
