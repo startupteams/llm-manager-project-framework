@@ -18,6 +18,11 @@ _sessions: dict[str, sessionmaker] = {}
 def _make_url(dsn_host: str, port: int, db: str, user: str, password: str) -> str:
     from urllib.parse import quote_plus
 
+    if dsn_host.startswith("/"):
+        # unix socket directory: must travel in the query string, not the netloc
+        # (a leading '/' there is parsed as the database path, host=None).
+        return (f"postgresql+psycopg2://{quote_plus(user)}:{quote_plus(password)}@/{db}"
+                f"?host={quote_plus(dsn_host)}&port={int(port)}")
     return f"postgresql+psycopg2://{quote_plus(user)}:{quote_plus(password)}@{dsn_host}:{port}/{db}"
 
 
