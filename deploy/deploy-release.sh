@@ -124,6 +124,36 @@ systemctl daemon-reload
 
 # ---- Phase E: candidate validation (before activation) ----------------------------
 echo "==> candidate validation"
+
+# E2 (window-4 plan §7): dependency reproducibility — the freeze file is the
+# source of truth; the venv built from it must actually import the modules the
+# flagged subsystems need. The window-3 incident: sqlalchemy was in the freeze
+# but missing from the legacy prod venv; the release transaction never checked.
+echo "==> dependency import verification (freeze-file contract)"
+"$VENV/bin/python" - <<'PYEOF' || die "dependency import verification FAILED (freeze file vs runtime drift)"
+import importlib, sys
+required = {
+    "sqlalchemy": "ORM_WRITE_CUTOVER",
+    "alembic": "ARM migrations",
+    "psycopg2": "legacy write paths",
+    "httpx": "FastAPI stack",
+    "uvicorn": "service entrypoint",
+    "fastapi": "service entrypoint",
+}
+missing = []
+for mod, consumer in required.items():
+    try:
+        importlib.import_module(mod)
+    except Exception as e:
+        missing.append(f"{mod} (needed by {consumer}): {type(e).__name__}: {e}")
+if missing:
+    print("MISSING RUNTIME DEPENDENCIES in release venv:", file=sys.stderr)
+    for m in missing:
+        print("  - " + m, file=sys.stderr)
+    sys.exit(1)
+print("  all required runtime imports OK")
+PYEOF
+
 "$VENV/bin/python" -m py_compile "$REL_DST"/service/app/*.py "$REL_DST"/service/collectors/*.py "$REL_DST"/service/control/*.py \
     || die "candidate py_compile failed"
 "$VENV/bin/python" "$REL_DST/service/app/v011_cost_tests.py" >/dev/null || die "candidate cost tests failed"
