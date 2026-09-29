@@ -78,7 +78,9 @@ jobs:
           # downloaded by the previous step and must survive this rm.
           rm -f llm-manager-*.tar.gz llm-manager-*.tar.gz.sha256
           unzip -o artifact.zip
-          WANT="llm-manager-${{ steps.sha.outputs.sha }}.tar.gz"
+          # build-release.sh names tarballs with the SHORT (12-char) sha while
+          # the CI upload uses the full github.sha — match the short form.
+          WANT="llm-manager-$(echo "${{ steps.sha.outputs.sha }}" | cut -c1-12).tar.gz"
           ART=$(find . -maxdepth 2 -name "$WANT" | head -1)
           [ -n "$ART" ] || { echo "artifact $WANT missing from CI run"; exit 1; }
           sha256sum -c "${ART}.sha256"
