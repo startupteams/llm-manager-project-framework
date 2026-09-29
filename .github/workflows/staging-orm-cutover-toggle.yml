@@ -23,15 +23,23 @@ jobs:
         run: |
           ssh llm-manager-deploy@10.0.20.131 "bash -s" <<REMOTE
           set -euo pipefail
-          F=/opt/llm-manager/.env
-          touch "$F"
-          sudo sed -i '/^ORM_WRITE_CUTOVER=/d' "$F" 2>/dev/null || true
-          if [ "${{ github.event.inputs.value }}" != "0" ] && [ -n "${{ github.event.inputs.value }}" ]; then
-            echo "ORM_WRITE_CUTOVER=${{ github.event.inputs.value }}" >> "$F"
+          # systemd drop-in (the web unit has no EnvironmentFile; bootstrap
+          # created drop-ins for env — match that mechanism)
+          sudo mkdir -p /etc/systemd/system/llm-manager-web.service.d
+          if [ -n "${{ github.event.inputs.value }}" ] && [ "${{ github.event.inputs.value }}" != "0" ]; then
+            printf '[Service]\nEnvironment=ORM_WRITE_CUTOVER=%s\n' "${{ github.event.inputs.value }}" \
+              | sudo tee /etc/systemd/system/llm-manager-web.service.d/orm-cutover.conf >/dev/null
+            sudo mkdir -p /etc/systemd/system/llm-manager-recovery.service.d
+            printf '[Service]\nEnvironment=ORM_WRITE_CUTOVER=%s\n' "${{ github.event.inputs.value }}" \
+              | sudo tee /etc/systemd/system/llm-manager-recovery.service.d/orm-cutover.conf >/dev/null
+          else
+            sudo rm -f /etc/systemd/system/llm-manager-web.service.d/orm-cutover.conf \
+                      /etc/systemd/system/llm-manager-recovery.service.d/orm-cutover.conf
           fi
+          sudo systemctl daemon-reload
           sudo systemctl restart llm-manager-web llm-manager-recovery
           sleep 4
           systemctl is-active llm-manager-web llm-manager-recovery
           curl -sk https://127.0.0.1/healthz | head -c 120; echo
-          sudo grep -c '^ORM_WRITE_CUTOVER=' "$F" || echo "flag-absent"
+          systemctl show llm-manager-web -p Environment | tr ' ' '\n' | grep ORM_WRITE || echo "flag-absent"
           REMOTE
