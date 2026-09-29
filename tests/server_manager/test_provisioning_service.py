@@ -43,12 +43,27 @@ class FakeVMProvider:
 
     def vm_config(self, node, vmid):
         import json
-        return {"description": json.dumps({"created_by_agent_runtime_manager": True})}
+        # marker carries acms_agent_id — the hygiene gate reads guest identity
+        # from this durable clone-time marker (ADR wiring, Phase D)
+        return {"description": json.dumps({
+            "created_by_agent_runtime_manager": True,
+            "acms_agent_id": getattr(self, "agent_id", None),
+        }),
+        "net0": "virtio,bridge=vmbr0,mac=BC:24:11:AA:BB:CC"}
 
 
 def _svc(monkeypatch, fake):
     svc = ProvisioningService()
     monkeypatch.setattr(svc, "provider", fake)
+    # hygiene gate reads the guest marker's acms_agent_id — FakeVMProvider
+    # serves whatever the test's requests declare (identity matches by design).
+    real_submit = svc.submit
+
+    def _submit(session, req, requested_by, authority):
+        fake.agent_id = req.acms_agent_id
+        return real_submit(session, req, requested_by, authority)
+
+    svc.submit = _submit
     return svc
 
 

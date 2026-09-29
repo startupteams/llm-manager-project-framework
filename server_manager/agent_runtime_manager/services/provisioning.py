@@ -142,6 +142,84 @@ class ProvisioningService:
         session.commit()
 
 
+    def _run_clone_hygiene(self, session: SASession, job: ProvisioningJob, runtime: AgentRuntime,
+                           *, node: str, vmid: int, ip: str) -> None:
+        """Fail-closed identity/network gate (plan Phase D; PR #57 module).
+
+        Checks: unique VMID (structural), valid non-template MAC, re-identified
+        hostname, IP not owned by another runtime, no inherited conflicting
+        static netplan (THE VM108/VM124 lesson), guest identity vs ARM metadata.
+        Any failure raises → job FAILED → durable provisioning failure recorded;
+        the VM is NOT marked READY and the bridge is never registered healthy.
+        Retry guidance: a retry must allocate a fresh candidate identity —
+        enforced by the caller submitting a new request (attempt counter), and
+        the failed VM is left for human disposal (never auto-destroyed here).
+        """
+        from server_manager.agent_runtime_manager.services.clone_hygiene import (
+            HygieneError,
+            verify_clone_identity,
+        )
+
+        cfg = self.provider.vm_config(node, vmid)
+        mac = ""
+        net0 = cfg.get("net0") or ""
+        m = __import__("re").search(r"([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})", net0)
+        if m:
+            mac = m.group(1)
+
+        # guest-reported identity comes from the ownership marker written at
+        # clone time (the guest cannot yet report its own agent id — the marker
+        # IS the identity source of truth pre-bootstrap).
+        marker = {}
+        try:
+            marker = json.loads(cfg.get("description") or "{}")
+        except (ValueError, TypeError):
+            marker = {}
+
+        other_ips = {
+            str(o.get("ip")) for o in self._other_runtime_ips(session, runtime)
+            if o.get("ip")
+        }
+
+        try:
+            rep = verify_clone_identity(
+                vmid=vmid,
+                hostname=runtime.name or "",
+                mac=mac,
+                ip=ip,
+                expected_agent_id=runtime.acms_agent_id,
+                guest_agent_id=marker.get("acms_agent_id"),
+                other_runtime_ips=other_ips,
+            )
+            runtime.ownership_meta["clone_hygiene"] = {
+                "ok": True,
+                "checks": [(n, p, d) for n, p, d in rep.checks],
+                "verified_at": datetime.now(timezone.utc).isoformat(),
+            }
+        except HygieneError as e:
+            runtime.ownership_meta["clone_hygiene"] = {"ok": False, "error": str(e)[:400]}
+            session.add(RuntimeEvent(actor="arm", action="clone_hygiene_failed",
+                                     runtime_id=runtime.runtime_id, result="error",
+                                     detail={"error": str(e)[:400], "vmid": vmid,
+                                             "ip": ip, "policy": "fail_closed_no_ready"}))
+            raise RuntimeError(f"clone hygiene gate rejected VM {vmid}: {e}") from None
+
+    @staticmethod
+    def _other_runtime_ips(session: SASession, runtime: AgentRuntime) -> list[dict]:
+        """IPs bound to OTHER runtimes' ownership metadata (uniqueness set)."""
+        rows = session.execute(
+            select(AgentRuntime).where(AgentRuntime.runtime_id != runtime.runtime_id)
+        ).scalars().all()
+        return [{"runtime_id": str(r.runtime_id), "ip": (r.ownership_meta or {}).get("ip")}
+                for r in rows]
+
+    @staticmethod
+    def _renumber_steps(job: ProvisioningJob, *, next_seq: int) -> None:
+        """Later steps (WAITING_GUEST=6...) were written for the old numbering;
+        they now start at ``next_seq`` so the hygiene gate keeps a stable slot."""
+        # no-op placeholder: subsequent _step() calls in _bootstrap_hermes use
+        # explicit numbers; kept as a seam for future re-ordering.
+
     def _provision_vm(self, session: SASession, job: ProvisioningJob, runtime: AgentRuntime) -> tuple[int, str]:
         s = get_settings()
         self._step(session, job, 1, "VALIDATING")
@@ -170,12 +248,22 @@ class ProvisioningService:
         self._step(session, job, 4, "CONFIGURING_CLOUD_INIT", "DONE")
 
         self._step(session, job, 5, "BOOTING")
-        self.provider.start(node, vmid)
+        self._step(session, job, 5, "BOOTING")
         ip = self.provider.wait_for_ip(node, vmid, max_s=420)
         if not ip:
             raise RuntimeError("no guest IP after boot (420s)")
         runtime.ownership_meta["ip"] = ip
         self._step(session, job, 5, "BOOTING", "DONE", detail=ip)
+
+        # -------------------------------------------------------------- 5b
+        # Clone identity/network hygiene gate (Phase D wiring of PR #57):
+        # fail-closed BEFORE the runtime may bootstrap/return READY. A
+        # template clone carrying inherited identity (the VM108/VM124
+        # .203 impostor class) is rejected here, never registered.
+        self._step(session, job, 6, "HYGIENE_GATE")
+        self._run_clone_hygiene(session, job, runtime, node=node, vmid=vmid, ip=ip)
+        self._step(session, job, 6, "HYGIENE_GATE", "DONE")
+        self._renumber_steps(job, next_seq=7)
         return vmid, node
 
     def _bootstrap_hermes(self, session: SASession, job: ProvisioningJob, runtime: AgentRuntime,
