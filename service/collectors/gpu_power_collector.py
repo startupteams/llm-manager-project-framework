@@ -96,9 +96,25 @@ def ensure_host_ids(conn):
             HOST_IDS[ip] = hid
 
 
+ORM_WRITE_CUTOVER = os.environ.get("ORM_WRITE_CUTOVER", "") == "1"
+
+
 def insert_samples(conn, rows):
     if not rows:
         return 0
+    if ORM_WRITE_CUTOVER:
+        # ORM Slice 6 bulk path (gpu_orm): one batched multi-row INSERT per
+        # cycle — never row-at-a-time ORM objects. Falls through to the legacy
+        # executemany path on any adapter error (collector must never stall).
+        try:
+            import sys as _sys
+            _app = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app")
+            if _app not in _sys.path:
+                _sys.path.insert(0, _app)
+            from gpu_orm import insert_samples_bulk
+            return insert_samples_bulk(list(rows))
+        except Exception:
+            pass
     with conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO gpu_samples (ts, host_id, gpu_index, util_pct, mem_used_mib, power_watts) "

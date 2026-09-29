@@ -28,6 +28,10 @@ PG_HOST = os.environ.get("LLM_MANAGER_PG_HOST", "10.0.20.116")
 PG_DB = "llmmanager"
 PG_USER = "llmmanager"
 PG_PW_FILE = f"{SECRETS}/pg_app_creds"
+# ORM Slice 5 cutover flag (TDR-0008; plan Phase E): when "1", the hosts /
+# model_registry / recovery_events write paths route through the SQLAlchemy
+# adapter (service/app/orm_write_adapter.py); absent/other = legacy psycopg2.
+ORM_WRITE_CUTOVER = os.environ.get("ORM_WRITE_CUTOVER", "") == "1"
 LITELLM_URL = "http://127.0.0.1:4000"
 
 # ip -> (node, vmid); fixed map per plan §A3 / current cluster layout
@@ -236,56 +240,91 @@ def sync_registry():
         with conn.cursor() as cur:
             cur.execute("SELECT host_id, guest_ip, name FROM hosts ORDER BY host_id")
             hosts = cur.fetchall()
+        if ORM_WRITE_CUTOVER:
+            from orm_write_adapter import (
+                orm_alias_target_routable, orm_delete_aliases,
+                orm_host_flags, orm_mark_host_unroutable,
+                orm_upsert_model_registry,
+            )
         for hid, ip, name in hosts:
             p = probe_host(ip)
             healthy = (p["models"] and p["health_completion"] == "ok")
             state = "healthy" if healthy else ("unhealthy" if p["error"] or p["health_completion"] else "unknown")
-            with conn.cursor() as cur:
-                cur.execute("""SELECT desired_power_state, management_mode FROM hosts
-                               WHERE host_id=%s""", (hid,))
-                row = cur.fetchone()
-                desired, mode = row if row else ("RUNNING", "MANAGED")
+            if ORM_WRITE_CUTOVER:
+                desired, mode = orm_host_flags(hid)
                 routable = bool(healthy and desired == "RUNNING" and mode == "MANAGED")
                 if p["models"]:
                     for m in p["models"]:
-                        cur.execute("""
-                            INSERT INTO model_registry (logical_model_name, host_id, engine,
-                                backend_url, context_limit, health, routable, last_verified, updated_at)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,now(),now())
-                            ON CONFLICT (logical_model_name, host_id) DO UPDATE SET
-                                engine=EXCLUDED.engine,
-                                backend_url=EXCLUDED.backend_url,
-                                context_limit=EXCLUDED.context_limit,
-                                health=EXCLUDED.health, routable=EXCLUDED.routable,
-                                last_verified=now(), updated_at=now()""",
-                            (m["id"], hid, "llamacpp" if ip == "10.0.20.165" else "vllm",
-                             f"http://{ip}:8000/v1", m.get("max_model_len"),
-                             state, routable))
+                        orm_upsert_model_registry(
+                            logical_model_name=m["id"], host_id=hid,
+                            engine="llamacpp" if ip == "10.0.20.165" else "vllm",
+                            backend_url=f"http://{ip}:8000/v1",
+                            context_limit=m.get("max_model_len"),
+                            health=state, routable=routable)
                 else:
                     # host down: mark its rows not routable, keep last known model
-                    cur.execute("""UPDATE model_registry SET health=%s, routable=FALSE, updated_at=now()
-                                   WHERE host_id=%s""", (state, hid))
+                    orm_mark_host_unroutable(host_id=hid, health=state)
+            else:
+                with conn.cursor() as cur:
+                    cur.execute("""SELECT desired_power_state, management_mode FROM hosts
+                                   WHERE host_id=%s""", (hid,))
+                    row = cur.fetchone()
+                    desired, mode = row if row else ("RUNNING", "MANAGED")
+                    routable = bool(healthy and desired == "RUNNING" and mode == "MANAGED")
+                    if p["models"]:
+                        for m in p["models"]:
+                            cur.execute("""
+                                INSERT INTO model_registry (logical_model_name, host_id, engine,
+                                    backend_url, context_limit, health, routable, last_verified, updated_at)
+                                VALUES (%s,%s,%s,%s,%s,%s,%s,now(),now())
+                                ON CONFLICT (logical_model_name, host_id) DO UPDATE SET
+                                    engine=EXCLUDED.engine,
+                                    backend_url=EXCLUDED.backend_url,
+                                    context_limit=EXCLUDED.context_limit,
+                                    health=EXCLUDED.health, routable=EXCLUDED.routable,
+                                    last_verified=now(), updated_at=now()""",
+                                (m["id"], hid, "llamacpp" if ip == "10.0.20.165" else "vllm",
+                                 f"http://{ip}:8000/v1", m.get("max_model_len"),
+                                 state, routable))
+                    else:
+                        # host down: mark its rows not routable, keep last known model
+                        cur.execute("""UPDATE model_registry SET health=%s, routable=FALSE, updated_at=now()
+                                       WHERE host_id=%s""", (state, hid))
             summary.append({"ip": ip, "name": name, "state": state, "routable": routable})
         # aliases: routable iff enabled + target routable somewhere
         cur = conn.cursor()
         cur.execute("""SELECT value FROM manager_settings WHERE key='v011.role_aliases.enabled'""")
         row = cur.fetchone()
         aliases_on = row and str(row[0]).lower() == "true"
-        cur.execute("""DELETE FROM model_registry WHERE is_alias=TRUE""")
-        if aliases_on:
-            for alias, target in (("fast", "qwen3.6-35b-a3b"), ("code", "qwen3.8-flash-next"),
-                                  ("frontier", None)):
-                if not target:
-                    continue
-                cur.execute("""SELECT COUNT(*) FROM model_registry
-                               WHERE logical_model_name=%s AND routable=TRUE""", (target,))
-                ok = cur.fetchone()[0] > 0
-                cur.execute("""
-                    INSERT INTO model_registry (logical_model_name, host_id, engine, is_alias,
-                        alias_target, health, routable, last_verified, updated_at)
-                    VALUES (%s, NULL, 'alias', TRUE, %s, %s, %s, now(), now())
-                    ON CONFLICT (logical_model_name, host_id) DO NOTHING""",
-                    (alias, target, "healthy" if ok else "unhealthy", ok))
+        if ORM_WRITE_CUTOVER:
+            orm_delete_aliases()
+            if aliases_on:
+                for alias, target in (("fast", "qwen3.6-35b-a3b"), ("code", "qwen3.8-flash-next"),
+                                      ("frontier", None)):
+                    if not target:
+                        continue
+                    ok = orm_alias_target_routable(target)
+                    orm_upsert_model_registry(
+                        logical_model_name=alias, host_id=None, engine="alias",
+                        backend_url="", context_limit=None,
+                        health="healthy" if ok else "unhealthy", routable=ok,
+                        is_alias=True, alias_target=target)
+        else:
+            cur.execute("""DELETE FROM model_registry WHERE is_alias=TRUE""")
+            if aliases_on:
+                for alias, target in (("fast", "qwen3.6-35b-a3b"), ("code", "qwen3.8-flash-next"),
+                                      ("frontier", None)):
+                    if not target:
+                        continue
+                    cur.execute("""SELECT COUNT(*) FROM model_registry
+                                   WHERE logical_model_name=%s AND routable=TRUE""", (target,))
+                    ok = cur.fetchone()[0] > 0
+                    cur.execute("""
+                        INSERT INTO model_registry (logical_model_name, host_id, engine, is_alias,
+                            alias_target, health, routable, last_verified, updated_at)
+                        VALUES (%s, NULL, 'alias', TRUE, %s, %s, %s, now(), now())
+                        ON CONFLICT (logical_model_name, host_id) DO NOTHING""",
+                        (alias, target, "healthy" if ok else "unhealthy", ok))
         conn.commit()
     except Exception as e:
         conn.rollback()
@@ -297,6 +336,9 @@ def sync_registry():
 
 def routable_models():
     """Models currently routable (registry gate §C2). Returns list of names."""
+    if ORM_WRITE_CUTOVER:
+        from orm_write_adapter import orm_routable_names
+        return orm_routable_names()
     conn = pg()
     if not conn:
         return []
@@ -365,23 +407,36 @@ async def set_desired_state(ip: str, request: Request):
         return JSONResponse({"error": "desired_power_state must be RUNNING|STOPPED_INTENTIONAL"}, status_code=400)
     if mode not in ("MANAGED", "UNMANAGED", None):
         return JSONResponse({"error": "management_mode must be MANAGED|UNMANAGED"}, status_code=400)
-    conn = pg()
-    try:
-        with conn.cursor() as cur:
-            if dps:
-                cur.execute("UPDATE hosts SET desired_power_state=%s WHERE guest_ip=%s", (dps, ip))
-            if mode:
-                cur.execute("UPDATE hosts SET management_mode=%s WHERE guest_ip=%s", (mode, ip))
-            cur.execute("""INSERT INTO recovery_events (ip, event_type, detail)
-                           VALUES (%s,'desired_state_change',%s)""",
-                        (ip, json.dumps({"user": user, "desired_power_state": dps,
-                                         "management_mode": mode})))
-            cur.execute("""SELECT guest_ip, desired_power_state, management_mode FROM hosts
-                           WHERE guest_ip=%s""", (ip,))
-            row = cur.fetchone()
-        conn.commit()
-    finally:
-        conn.close()
+    if ORM_WRITE_CUTOVER:
+        from orm_write_adapter import (orm_hosts_row_by_ip, orm_insert_recovery_event,
+                                       orm_update_hosts_by_ip)
+        if dps:
+            orm_update_hosts_by_ip(guest_ip=ip, fields={"desired_power_state": dps})
+        if mode:
+            orm_update_hosts_by_ip(guest_ip=ip, fields={"management_mode": mode})
+        orm_insert_recovery_event(ip=ip, event_type="desired_state_change",
+                                  detail={"user": user, "desired_power_state": dps,
+                                          "management_mode": mode})
+        row = orm_hosts_row_by_ip(ip)
+        row = (row["guest_ip"], row["desired_power_state"], row["management_mode"])             if row else None
+    else:
+        conn = pg()
+        try:
+            with conn.cursor() as cur:
+                if dps:
+                    cur.execute("UPDATE hosts SET desired_power_state=%s WHERE guest_ip=%s", (dps, ip))
+                if mode:
+                    cur.execute("UPDATE hosts SET management_mode=%s WHERE guest_ip=%s", (mode, ip))
+                cur.execute("""INSERT INTO recovery_events (ip, event_type, detail)
+                               VALUES (%s,'desired_state_change',%s)""",
+                            (ip, json.dumps({"user": user, "desired_power_state": dps,
+                                             "management_mode": mode})))
+                cur.execute("""SELECT guest_ip, desired_power_state, management_mode FROM hosts
+                               WHERE guest_ip=%s""", (ip,))
+                row = cur.fetchone()
+            conn.commit()
+        finally:
+            conn.close()
     if dps == "STOPPED_INTENTIONAL":
         # drain immediately: registry gate flips on next sync; force now
         sync_registry()
@@ -412,15 +467,20 @@ async def power_off(ip: str, request: Request):
         return JSONResponse(
             {"error": "set desired state to STOPPED_INTENTIONAL before power-off"}, status_code=409)
     ok = vm_power(ip, "shutdown")
-    conn = pg()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""INSERT INTO recovery_events (ip, event_type, detail)
-                           VALUES (%s,'intentional_power_off',%s)""",
-                        (ip, json.dumps({"user": user, "ok": ok})))
-        conn.commit()
-    finally:
-        conn.close()
+    detail = {"user": user, "ok": ok}
+    if ORM_WRITE_CUTOVER:
+        from orm_write_adapter import orm_insert_recovery_event
+        orm_insert_recovery_event(ip=ip, event_type="intentional_power_off", detail=detail)
+    else:
+        conn = pg()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""INSERT INTO recovery_events (ip, event_type, detail)
+                               VALUES (%s,'intentional_power_off',%s)""",
+                            (ip, json.dumps(detail)))
+            conn.commit()
+        finally:
+            conn.close()
     return {"status": "ok" if ok else "error"}
 
 

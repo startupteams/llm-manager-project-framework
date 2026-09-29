@@ -39,6 +39,32 @@ LLM serving path.
     facility_power_samples, host_power_rollup_1m, facility_power_rollup_1d, recovery_events,
     request_routing_log, manager_settings, rdma_ring_nodes, multi_node_deployments — read-only
     ORM parity for these is safe and additive.
-- **Slices 5–6 (planned):** 5 = write-path parity behind the adapter layer (verify by row-count +
-  checksum before cutover); 6 = remaining telemetry tables AFTER the retention decision lands.
-  Legacy psycopg2 paths stay until write parity is proven (TDR-0008 rule).
+- **Slice 5 (merged, 2026-09-29):** write-path parity + CUTOVER plumbing.
+  - `service/app/orm_write_adapter.py` — sync SQLAlchemy 2 Core adapter over the SAME schema (no DDL;
+    column-whitelist guard; same psycopg2 credential contract; socket-dir URL trap handled).
+  - Parity tests `tests/test_orm_slice5_cutover.py` (7): hosts update/inventory/flags, model_registry
+    upsert/unroutable/alias flow, recovery_events insert + recent_count, checksum parity probe.
+  - **Legacy-parity finding:** the UNIQUE (logical_model_name, host_id) constraint does NOT dedupe NULL
+    host_ids (aliases) — legacy delete-then-insert order is required; the adapter mirrors it exactly.
+  - v011_core desired-state/power-off/sync_registry/routable_models + v011_recovery audit()/recent_count()
+    route through the adapter behind env `ORM_WRITE_CUTOVER=1` (default OFF = legacy psycopg2; instant
+    rollback = unset the env).
+  - Static source test window widened (indent shift) — semantic guarantee unchanged.
+- **Slice 6 (merged, 2026-09-29):** gpu_samples family ORM access (retention live → unblocked).
+  - `service/app/gpu_orm.py` — sync SQLAlchemy Core adapter: BULK insert_samples_bulk (one multi-row INSERT
+    per collector cycle — never row-at-a-time ORM objects), hourly_rollup_window (IDENTICAL upsert SQL to
+    gpu_retention._rollup_window incl. power_sum_wh/last_ts + DO UPDATE refresh), prune_raw_older_than
+    (bounded batch on sample_id PK), window reads (mappings-batched), retention_settings (config keys
+    gpu_samples_{,hourly_}retention_days), parity checksums.
+  - Collector `insert_samples` routes through gpu_orm behind `ORM_WRITE_CUTOVER=1` (fall-through to legacy
+    executemany on adapter error — the collector must never stall).
+  - Tests `tests/test_gpu_orm_slice6.py` (5, pgserver): bulk insert, hour-aligned upsert refresh (W2 lesson
+    verified), bounded prune keeps aggregates, window reads, parity probe shape. **Schema truth:** PK is
+    sample_id (not id); numeric columns → Decimal; UNIQUE (name, host_id) does NOT dedupe NULLs.
+  - Retention guarantees preserved: 90d raw / 730d hourly, aggregate-before-prune, closed-hour alignment,
+    scheduled timer — all untouched.
+- **Still on legacy psycopg2 after both slices (deliberate):** LiteLLM-owned writes (never absorbed),
+  gpu_retention.py operational SQL (verified machinery — cutover optional, flag-gated path exists),
+  spend_guard / cost reads. Staging/prod shadow validation for the ORM_WRITE_CUTOVER=1 path: next deploy.
+- **Slices 6 (planned):** telemetry tables — now unblocked by the retention decision (executed 2026-09-29).
+  Legacy psycopg2 paths stay until staging + prod shadow validation completes (this sprint).

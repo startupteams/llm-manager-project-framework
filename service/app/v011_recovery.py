@@ -28,6 +28,19 @@ TICK_SECONDS = 60
 _audit_file = "/var/log/llm-manager/recovery-engine.log"
 
 
+def audit_log_only(line):
+    """File-only fallback when the DB insert path fails (fact kept, not lost)."""
+    try:
+        os.makedirs(os.path.dirname(_audit_file), exist_ok=True)
+        with open(_audit_file, "a") as f:
+            f.write(json.dumps({**line, "db": "insert_failed"}) + "\n")
+    except Exception:
+        pass
+
+
+ORM_WRITE_CUTOVER = os.environ.get("ORM_WRITE_CUTOVER", "") == "1"
+
+
 def audit(ip, event_type, detail):
     line = {"ts": datetime.now(timezone.utc).isoformat(), "ip": ip,
             "event_type": event_type, "detail": detail}
@@ -37,6 +50,13 @@ def audit(ip, event_type, detail):
             f.write(json.dumps(line) + "\n")
     except Exception:
         pass
+    if ORM_WRITE_CUTOVER:
+        try:
+            from orm_write_adapter import orm_insert_recovery_event
+            orm_insert_recovery_event(ip=ip, event_type=event_type, detail=detail)
+        except Exception:
+            audit_log_only(line)  # never lose the audit fact to a DB failure
+        return
     conn = pg()
     if conn:
         try:
@@ -51,6 +71,12 @@ def audit(ip, event_type, detail):
 
 
 def recent_count(ip, event_type, minutes=30):
+    if ORM_WRITE_CUTOVER:
+        try:
+            from orm_write_adapter import orm_recent_event_count
+            return orm_recent_event_count(ip=ip, event_type=event_type, minutes=minutes)
+        except Exception:
+            return 99  # fail-safe parity: no DB -> no recovery actions
     conn = pg()
     if not conn:
         return 99  # fail-safe: no DB -> no recovery actions
