@@ -42,9 +42,18 @@ log = logging.getLogger("arm.reconciler")
 
 @dataclass
 class ReconcileSettings:
-    """Tunables (env-overridable). Backoff is exponential-capped."""
+    """Tunables (env-overridable). Backoff is exponential-capped.
 
-    max_recovery_attempts: int = 3
+    Recovery policy (human direction 2026-09-29): maximum 5 automatic
+    recovery attempts per incident, attempts varying (bounded exponential
+    backoff), then Human Attention. Strategy ladder for the VM-level failure
+    classes this service owns: recheck/observe → VM start → exhausted →
+    Human Attention. Service/harness restarts belong to their own components
+    (LLM Manager serving stack / ACMS bridge), NOT here; PDU hard-cycle is
+    NEVER an automatic step.
+    """
+
+    max_recovery_attempts: int = 5
     backoff_base_s: int = 10
     backoff_cap_s: int = 120
     bridge_wait_s: int = 300
@@ -62,7 +71,7 @@ class ReconcileSettings:
                 return default
 
         return cls(
-            max_recovery_attempts=_i("ARM_RECONCILE_MAX_ATTEMPTS", 3),
+            max_recovery_attempts=_i("ARM_RECONCILE_MAX_ATTEMPTS", 5),
             backoff_base_s=_i("ARM_RECONCILE_BACKOFF_BASE_S", 10),
             backoff_cap_s=_i("ARM_RECONCILE_BACKOFF_CAP_S", 120),
             bridge_wait_s=_i("ARM_RECONCILE_BRIDGE_WAIT_S", 300),
@@ -190,7 +199,10 @@ class ReconciliationService:
                 r.recovery_count = 0
                 r.last_error = None
                 self._audit(session, r, "reconcile_observe", "ok",
-                            {"note": "PVE says running; actual corrected", "pve": pve})
+                            {"note": "PVE says running; actual corrected", "pve": pve,
+                             "recovery_method": "recheck_observe",
+                             "time_to_recovery_note": "converged by observation"})
+
             return ReconcileResult(runtime_id=str(r.runtime_id), desired="DESIRED_RUNNING",
                                    before=before, after=ActualState.RUNNING.value, action="noop")
         if pve not in ("stopped",):
@@ -204,7 +216,14 @@ class ReconciliationService:
         if r.recovery_count >= self.settings.max_recovery_attempts:
             r.last_error = f"recovery exhausted ({r.recovery_count} attempts)"
             self._audit(session, r, "reconcile_recovery_exhausted", "error",
-                        {"attempts": r.recovery_count})
+                        {"attempts": r.recovery_count,
+                         "failure_class": "vm_start_recovery_exhausted",
+                         "recovery_method": "vm_start",
+                         "strategy_next": "human_attention",
+                         "note": ("bounded strategy ladder complete: recheck → vm_start "
+                                  "×%d → exhausted; PDU hard-cycle is never automatic; "
+                                  "service/harness restarts belong to their own components"
+                                  % r.recovery_count)})
             return ReconcileResult(runtime_id=str(r.runtime_id), desired="DESIRED_RUNNING",
                                    before=before, after=before, action="error",
                                    error=r.last_error, detail={"recovery_count": r.recovery_count})
@@ -215,14 +234,21 @@ class ReconciliationService:
             self._audit(session, r, "reconcile_backoff", "ok", {"delay_s": delay})
             # In-loop sleep is bounded by cap (≤120s); single-threaded loop accepts it.
             time.sleep(delay)
-        self._audit(session, r, "reconcile_start", "ok", {"node": r.node, "vmid": r.vmid})
+        self._audit(session, r, "reconcile_start", "ok",
+                    {"node": r.node, "vmid": r.vmid,
+                     "failure_class": "vm_stopped_desired_running",
+                     "recovery_method": "vm_start",
+                     "attempt": (r.recovery_count or 0) + 1,
+                     "recovery_history": True})
         self.provider.start(r.node, r.vmid)
         r.actual_state = ActualState.RUNNING
         r.recovery_count = (r.recovery_count or 0) + 1
         r.last_error = None
         return ReconcileResult(runtime_id=str(r.runtime_id), desired="DESIRED_RUNNING",
                                before=before, after=ActualState.RUNNING.value, action="started",
-                               detail={"node": r.node, "vmid": r.vmid})
+                               detail={"node": r.node, "vmid": r.vmid,
+                                       "attempt": r.recovery_count,
+                                       "recovery_method": "vm_start"})
 
     # ------------------------------------------------ desired STOPPED
     def _reconcile_stopped(self, session: SASession, r: AgentRuntime, before: str, pve: str) -> ReconcileResult:
@@ -249,7 +275,9 @@ class ReconciliationService:
             return ReconcileResult(runtime_id=str(r.runtime_id), desired="DESIRED_STOPPED",
                                    before=before, after=ActualState.STOPPED.value, action="shutdown")
         r.last_error = f"shutdown did not converge (pve={after})"
-        self._audit(session, r, "reconcile_shutdown_unverified", "error", {"pve": after})
+        self._audit(session, r, "reconcile_shutdown_unverified", "error",
+                    {"pve": after, "failure_class": "shutdown_unverified",
+                     "recovery_method": "graceful_shutdown_then_verify"})
         return ReconcileResult(runtime_id=str(r.runtime_id), desired="DESIRED_STOPPED",
                                before=before, after=before, action="error", error=r.last_error)
 
