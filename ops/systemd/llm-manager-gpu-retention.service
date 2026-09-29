@@ -5,7 +5,7 @@ After=network-online.target
 [Service]
 Type=oneshot
 # Runs as root: reads /etc/llm-manager/secrets/pg_app_creds (0600) same as the app.
-ExecStart=/opt/llm-manager/venv/bin/python3 /opt/llm-manager/app/gpu_retention.py maintenance
+ExecStart=/opt/llm-manager/venv/bin/python3 /opt/llm-manager/current/app/gpu_retention.py maintenance
 TimeoutStartSec=1800
 # Every run must leave a trace; failures surface in journal + monitoring.
 SyslogIdentifier=llm-manager-gpu-retention
