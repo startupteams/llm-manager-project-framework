@@ -66,9 +66,12 @@ def _conn(llm_pg):
 
 def test_host_writes_match_legacy_semantics(llm_pg):
     """The ORM write repos must produce EXACTLY the legacy SQL's effect."""
-    from server_manager.llm_manager.repositories.write_paths import (
-        HostWrites, RecoveryEventWrites,
-    )
+    try:
+        from server_manager.llm_manager.repositories.write_paths import (
+            HostWrites, RecoveryEventWrites,
+        )
+    except ImportError:
+        pytest.skip("sqlalchemy asyncio stack (greenlet) unavailable in this env")
     # The write repos are async (SQLAlchemy async session). Drive them on a
     # sync PG URL via asyncpg-free engine shim: run the async methods with a
     # sync Session wrapped in a tiny async shim.
