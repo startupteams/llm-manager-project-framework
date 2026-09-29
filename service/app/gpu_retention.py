@@ -142,7 +142,12 @@ def cmd_backfill() -> int:
         cur0 = start
         total = 0
         while cur0 < hi:
+            # Chunk on hour-aligned boundaries: a non-aligned chunk end would
+            # re-aggregate a straddling hour from partial data and the upsert
+            # would overwrite the full aggregate with the partial one.
             nxt = min(cur0 + timedelta(hours=24), hi + timedelta(seconds=1))
+            if nxt < hi:
+                nxt = nxt.replace(minute=0, second=0, microsecond=0)
             total += _rollup_window(conn, cur0, nxt)
             cur0 = nxt
             log(f"backfill: chunk done through {nxt} (cumulative buckets: {total})")
