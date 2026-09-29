@@ -196,7 +196,12 @@ jobs:
       - name: build immutable release artifact
         run: |
           chmod +x deploy/build-release.sh
+          rm -f dist/llm-manager-*.tar.gz dist/llm-manager-*.tar.gz.sha256
           ./deploy/build-release.sh "$(pwd)" dist
+      - name: assert exactly one artifact pair
+        run: |
+          N=$(ls dist/llm-manager-*.tar.gz | wc -l)
+          [ "$N" = "1" ] || { echo "dist has $N tarballs (stale committed dist/ files?); refusing to upload"; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: llm-manager-${{ github.sha }}
