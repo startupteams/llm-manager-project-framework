@@ -74,7 +74,9 @@ jobs:
           # 8b05afb). Select by the EXACT resolved-SHA name and clear stale
           # tarballs first.
           cd "$RUNNER_TEMP"
-          rm -f llm-manager-*.tar.gz llm-manager-*.tar.gz.sha256 artifact.zip
+          # NOTE: remove ONLY stale tarballs — artifact.zip is freshly
+          # downloaded by the previous step and must survive this rm.
+          rm -f llm-manager-*.tar.gz llm-manager-*.tar.gz.sha256
           unzip -o artifact.zip
           WANT="llm-manager-${{ steps.sha.outputs.sha }}.tar.gz"
           ART=$(find . -maxdepth 2 -name "$WANT" | head -1)
