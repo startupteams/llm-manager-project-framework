@@ -168,7 +168,7 @@ def cmd_verify() -> int:
             windows = [
                 ("last_24h", "now() - interval '24 hours'", "now()"),
                 ("mid_history_48h", "now() - interval '12 days'", "now() - interval '10 days'"),
-                ("all_time", "-infinity", "infinity"),
+                ("all_time", "'-infinity'::timestamptz", "'infinity'::timestamptz"),
             ]
             for name, lo, hi in windows:
                 cur.execute(f"""
