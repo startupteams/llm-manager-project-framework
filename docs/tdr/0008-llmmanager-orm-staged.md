@@ -68,3 +68,41 @@ LLM serving path.
   spend_guard / cost reads. Staging/prod shadow validation for the ORM_WRITE_CUTOVER=1 path: next deploy.
 - **Slices 6 (planned):** telemetry tables — now unblocked by the retention decision (executed 2026-09-29).
   Legacy psycopg2 paths stay until staging + prod shadow validation completes (this sprint).
+
+## Window-4 (2026-09-29) — FINAL STATUS: cutover complete, boundary frozen
+
+**End condition reached.** ORM_WRITE_CUTOVER=1 is live in production (systemd
+drop-ins, VM114) AND validated on staging VM120 (shadow parity: ORM hosts read
+== legacy psycopg2 count; gpu_orm imports clean; retention settings 90/730
+read via ORM). The release-transaction dependency probe (same window) verifies
+sqlalchemy/alembic import before every future cutover.
+
+### What is ORM (SQLAlchemy Core, owned by LLM Manager)
+- `service/app/orm_write_adapter.py` — hosts, model_registry (incl. aliases
+  w/ delete-then-insert NULL-dedupe order), recovery_events (audit +
+  recent_count), desired-state/power-off/sync_registry/routable_models reads.
+- `service/app/gpu_orm.py` — gpu_samples bulk insert, hourly rollup upsert
+  (hour-aligned), bounded prune, window reads, retention settings.
+- `server_manager/llm_manager/models/` — slices 1-4 read-only reflective ORM
+  (hosts/registry/recovery/routing/rates/settings) for the SM API.
+
+### What remains raw SQL (intentional, documented)
+| Domain | Owner | Why raw |
+|---|---|---|
+| `hosting_command_presets` writes | LLM Manager v011 | operational CRUD verified in prod; low write volume; no ORM benefit |
+| `agent_keys`, `rdma_ring_nodes`, `facility_power_samples`, `host_power_rollup_*` | LLM Manager v011 | infra/ops tables outside the slice-5/6 domains; raw SQL is the legacy contract |
+| `gpu_retention.py` rollup/prune machinery | LLM Manager | verified operational SQL (hour-alignment fix + 24h repair proven live); the ORM path exists but the retention timer keeps the proven path |
+| `LiteLLM_*` tables | LiteLLM | NEVER absorbed (adapter boundary; separate `litellm` DB) |
+| `service/agentmanager/*` | legacy AgentManager | superseded-but-alive pending UI parity (TDR-0010) |
+
+### Rollback path (why flag-gated legacy code is retained, not deleted)
+Every cut-over call site keeps the legacy psycopg2 branch behind
+`ORM_WRITE_CUTOVER` (default OFF). Removing it would destroy the
+instant-rollback property the cutover was designed around. The legacy paths
+are FROZEN fallback, not dead code: they change only when the ORM contract
+changes. G2's "remove dead direct writes" does not apply — none are dead.
+
+### Ownership
+LLM Manager core team owns the ORM modules + this boundary. Any NEW table
+access should use the ORM/Core adapters; raw SQL for the domains above needs
+a TDR note in the PR.
