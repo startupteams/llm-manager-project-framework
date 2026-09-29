@@ -33,7 +33,14 @@ CREATE TABLE IF NOT EXISTS gpu_samples_hourly (
     last_ts       timestamptz NOT NULL,
     PRIMARY KEY (hour_bucket, host_id, gpu_index)
 );
-ALTER TABLE gpu_samples_hourly OWNER TO llmmanager;
+-- OWNER: production runs as role llmmanager; CI runs as postgres. Use an
+-- idempotent, role-safe owner assignment that works in both environments.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'llmmanager') THEN
+        ALTER TABLE gpu_samples_hourly OWNER TO llmmanager;
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_gpu_hourly_host_ts
     ON gpu_samples_hourly (host_id, hour_bucket DESC);
