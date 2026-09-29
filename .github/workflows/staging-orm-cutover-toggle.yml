@@ -1,0 +1,37 @@
+name: staging-orm-cutover-toggle
+
+# 2026-09-29 ORM Slice 5/6 shadow validation: enable/disable ORM_WRITE_CUTOVER
+# on STAGING (VM120) via the deploy runner (the only identity holding SSH access).
+# One-shot operational toggle — NOT a general config service.
+
+on:
+  workflow_dispatch:
+    inputs:
+      value:
+        description: 'ORM_WRITE_CUTOVER value (1 = ORM paths, empty/0 = legacy psycopg2)'
+        required: true
+        default: '1'
+
+permissions:
+  contents: read
+
+jobs:
+  toggle:
+    runs-on: [self-hosted, marion, llm-manager-deploy]
+    steps:
+      - name: Set ORM_WRITE_CUTOVER on staging + restart web
+        run: |
+          ssh llm-manager-deploy@10.0.20.131 "bash -s" <<REMOTE
+          set -euo pipefail
+          F=/opt/llm-manager/.env
+          touch "$F"
+          sudo sed -i '/^ORM_WRITE_CUTOVER=/d' "$F" 2>/dev/null || true
+          if [ "${{ github.event.inputs.value }}" != "0" ] && [ -n "${{ github.event.inputs.value }}" ]; then
+            echo "ORM_WRITE_CUTOVER=${{ github.event.inputs.value }}" >> "$F"
+          fi
+          sudo systemctl restart llm-manager-web llm-manager-recovery
+          sleep 4
+          systemctl is-active llm-manager-web llm-manager-recovery
+          curl -sk https://127.0.0.1/healthz | head -c 120; echo
+          sudo grep -c '^ORM_WRITE_CUTOVER=' "$F" || echo "flag-absent"
+          REMOTE
