@@ -170,10 +170,15 @@ def cmd_verify() -> int:
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
             # 3 representative windows: last 24h, a 48h window 10-12 days ago, all-time.
+            # Only CLOSED hours are verifiable: raw ingest is continuous, so an
+            # open hour races between the raw aggregate and the rollup read. Only
+            # WHOLE hours inside each window are sampled: a boundary hour would
+            # compare a truncated raw aggregate against the full-hour rollup row.
+            closed = "date_trunc('hour', now())"
             windows = [
-                ("last_24h", "now() - interval '24 hours'", "now()"),
+                ("last_24h_closed", f"{closed} - interval '24 hours'", closed),
                 ("mid_history_48h", "now() - interval '12 days'", "now() - interval '10 days'"),
-                ("all_time", "'-infinity'::timestamptz", "'infinity'::timestamptz"),
+                ("all_time_closed", "'-infinity'::timestamptz", closed),
             ]
             for name, lo, hi in windows:
                 cur.execute(f"""
@@ -181,6 +186,8 @@ def cmd_verify() -> int:
                            count(*) c, avg(util_pct) u_avg, avg(power_watts) p_avg
                     FROM gpu_samples
                     WHERE ts >= {lo} AND ts < {hi} AND host_id IS NOT NULL
+                      AND date_trunc('hour', ts) >= {lo}
+                      AND date_trunc('hour', ts) + interval '1 hour' <= {hi}
                     GROUP BY 1,2,3
                     HAVING count(*) > 0
                     ORDER BY random() LIMIT 200""")
