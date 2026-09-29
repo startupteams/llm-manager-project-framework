@@ -68,10 +68,17 @@ jobs:
 
       - name: Unpack + checksum-verify artifact
         run: |
+          # 2026-09-29 lesson: self-hosted runners reuse RUNNER_TEMP — a STALE
+          # llm-manager-*.tar.gz from a previous deploy survived there and
+          # `find | head -1` picked it (staging deployed 32a905e while main was
+          # 8b05afb). Select by the EXACT resolved-SHA name and clear stale
+          # tarballs first.
           cd "$RUNNER_TEMP"
+          rm -f llm-manager-*.tar.gz llm-manager-*.tar.gz.sha256 artifact.zip
           unzip -o artifact.zip
-          ART=$(find . -maxdepth 2 -name 'llm-manager-*.tar.gz' | head -1)
-          [ -n "$ART" ] || { echo "artifact missing"; exit 1; }
+          WANT="llm-manager-${{ steps.sha.outputs.sha }}.tar.gz"
+          ART=$(find . -maxdepth 2 -name "$WANT" | head -1)
+          [ -n "$ART" ] || { echo "artifact $WANT missing from CI run"; exit 1; }
           sha256sum -c "${ART}.sha256"
           echo "ARTIFACT=$(readlink -f "$ART")" >> "$GITHUB_ENV"
 
