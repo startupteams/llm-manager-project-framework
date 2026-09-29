@@ -45,7 +45,7 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_gpu_hourly_host_ts
     ON gpu_samples_hourly (host_id, hour_bucket DESC);
 
--- Seed the two retention knobs as configuration-backed values (plan §B5).
+-- Seed the two retention knobs as configuration-backed values (plan B5).
 -- ON CONFLICT keeps operator overrides intact on re-apply.
 INSERT INTO manager_settings (key, value)
 VALUES
