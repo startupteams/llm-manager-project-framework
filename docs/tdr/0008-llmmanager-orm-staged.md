@@ -22,3 +22,23 @@ LLM serving path.
 
 - Two persistence styles coexist temporarily in the llmmanager DB (raw SQL + Core reads).
 - `server_manager.llm_manager.adapters` isolates the eventual cutover.
+
+## Slice status log (2026-09-29)
+
+- **Slice 1 (merged #47):** hosts / active_hosts / model_registry reflective ORM.
+- **Slices 2–3 (merged #49):** deployment_revisions / deployments + benchmark_runs /
+  qualification_envelopes reflective ORM + 4 read endpoints.
+- **Slice 4 (this phase, read-only inventory + scoped models):**
+  - **gpu_samples retention dependency:** gpu_samples is 197 MB / 1,591,369 rows of a 225 MB DB
+    (re-measured 2026-09-29; prior proposal said 191 MB / 1.54M — growth ~ +5 MB/week at the same
+    order). Retention decision STILL PENDING (human). Any ORM work that would WRITE to gpu_samples
+    or change its schema stays blocked; the retention proposal remains
+    GPU_SAMPLES_RETENTION_PROPOSAL (rollup table + N-day raw window; nothing deleted without
+    approval).
+  - **NOT blocked by retention:** electricity_rates, emporia_devices, emporia_channel_map,
+    facility_power_samples, host_power_rollup_1m, facility_power_rollup_1d, recovery_events,
+    request_routing_log, manager_settings, rdma_ring_nodes, multi_node_deployments — read-only
+    ORM parity for these is safe and additive.
+- **Slices 5–6 (planned):** 5 = write-path parity behind the adapter layer (verify by row-count +
+  checksum before cutover); 6 = remaining telemetry tables AFTER the retention decision lands.
+  Legacy psycopg2 paths stay until write parity is proven (TDR-0008 rule).
