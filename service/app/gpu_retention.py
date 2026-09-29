@@ -112,12 +112,23 @@ def _rollup_window(conn, since: datetime, until: datetime) -> int:
 
 
 def cmd_rollup() -> int:
-    """Incremental: re-aggregate the last 3 hours (idempotent upsert)."""
+    """Incremental: re-aggregate the last 3 hours (idempotent upsert).
+
+    2026-09-29 verify-failure lesson: the old window started at ``now - 3h``
+    (MID-HOUR at :01-:05) — the oldest hour bucket was upserted from a TRUNCATED
+    row set (the first ~3-5 min of samples excluded) and every subsequent run
+    started even later, so the deficit became permanent (verify FAIL
+    per-bucket: rollup 134 vs raw 142). The window is now HOUR-ALIGNED at the
+    start edge; the end edge (+5 min into the open hour) is fine because the
+    open bucket is refreshed by later runs and verify only judges CLOSED hours.
+    """
     conn = connect()
     try:
         now = datetime.now(timezone.utc)
-        n = _rollup_window(conn, now - timedelta(hours=3), now + timedelta(minutes=5))
-        log(f"rollup: {n} hourly buckets upserted (last 3h window)")
+        since = now - timedelta(hours=3)
+        since = since.replace(minute=0, second=0, microsecond=0)  # hour-aligned start
+        n = _rollup_window(conn, since, now + timedelta(minutes=5))
+        log(f"rollup: {n} hourly buckets upserted (window {since.isoformat()}..)")
         return 0
     finally:
         conn.close()
