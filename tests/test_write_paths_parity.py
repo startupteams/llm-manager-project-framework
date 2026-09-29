@@ -69,15 +69,9 @@ def test_host_writes_match_legacy_semantics(llm_pg):
     from server_manager.llm_manager.repositories.write_paths import (
         HostWrites, RecoveryEventWrites,
     )
-    import asyncio
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session
-
     # The write repos are async (SQLAlchemy async session). Drive them on a
     # sync PG URL via asyncpg-free engine shim: run the async methods with a
     # sync Session wrapped in a tiny async shim.
-    from unittest.mock import patch
-
     conn = _conn(llm_pg)
 
     class _Res:
