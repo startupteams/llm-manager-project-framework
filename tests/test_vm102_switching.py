@@ -170,7 +170,7 @@ class TestSyncRegistryRefresh:
         # find the ON CONFLICT block inside sync_registry
         idx = src.find("ON CONFLICT (logical_model_name, host_id) DO UPDATE SET")
         assert idx != -1
-        block = src[idx:idx + 400]
+        block = src[idx:idx + 520]  # window covers the deeper legacy-branch indent
         assert "engine=EXCLUDED.engine" in block
         assert "backend_url=EXCLUDED.backend_url" in block
         assert "context_limit=EXCLUDED.context_limit" in block
