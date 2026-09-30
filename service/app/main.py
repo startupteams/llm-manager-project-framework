@@ -428,6 +428,108 @@ def admin_fleet(request: Request):
                         .replace("__ROLE__", role or ""))
 
 
+# ---------------------------------------------------------------- Agent Runtimes (window-5 §4)
+
+@app.get("/admin/agents", response_class=HTMLResponse)
+def admin_agents(request: Request):
+    from agent_ui import AGENTS_HTML, render
+
+    return render(AGENTS_HTML, request)
+
+
+@app.get("/admin/agents/new", response_class=HTMLResponse)
+def admin_agents_new(request: Request):
+    from agent_ui import NEW_AGENT_HTML, render
+
+    return render(NEW_AGENT_HTML, request)
+
+
+@app.get("/admin/agents/{runtime_id}", response_class=HTMLResponse)
+def admin_agent_detail(runtime_id: str, request: Request):
+    from agent_ui import AGENT_DETAIL_HTML, render, sm_api
+
+    page = render(AGENT_DETAIL_HTML, request)
+    if not isinstance(page, HTMLResponse):
+        return page
+    code, rt, err = sm_api("GET", f"/api/v1/agent-runtimes/{runtime_id}")
+    name = (rt or {}).get("name", runtime_id[:8]) if isinstance(rt, dict) else runtime_id[:8]
+    state = (rt or {}).get("actual_state", "UNKNOWN") if isinstance(rt, dict) else "UNKNOWN"
+    return HTMLResponse(page.body.decode().replace("__NAME__", str(name))
+                        .replace("__STATE__", str(state)).replace("__RID__", runtime_id))
+
+
+@app.get("/api/agent-runtimes")
+def api_agent_runtimes(request: Request):
+    """Proxy the SM/ARM runtime list for the operator shell (read scope)."""
+    user, role = current_user(request)
+    if not user:
+        return JSONResponse({"error": "auth required"}, status_code=401)
+    from agent_ui import sm_api
+
+    code, data, err = sm_api("GET", "/api/v1/agent-runtimes")
+    if code == 200 and isinstance(data, dict):
+        return data
+    return JSONResponse({"error": err or f"server-manager api {code}"}, status_code=502)
+
+
+@app.get("/api/agent-runtimes/{runtime_id}")
+def api_agent_runtime(runtime_id: str, request: Request):
+    user, role = current_user(request)
+    if not user:
+        return JSONResponse({"error": "auth required"}, status_code=401)
+    from agent_ui import sm_api
+
+    code, data, err = sm_api("GET", f"/api/v1/agent-runtimes/{runtime_id}")
+    if code == 200 and isinstance(data, dict):
+        return data
+    return JSONResponse({"error": err or f"server-manager api {code}"}, status_code=502)
+
+
+@app.post("/api/agent-runtimes/{runtime_id}/desired-state")
+async def api_agent_desired_state(runtime_id: str, request: Request):
+    user, role = current_user(request)
+    if not user or role not in CAN_RESTART:
+        return JSONResponse({"error": "role does not permit runtime control"}, status_code=403)
+    from agent_ui import sm_api
+
+    body = await request.json()
+    code, data, err = sm_api("POST", f"/api/v1/agent-runtimes/{runtime_id}/desired-state", body)
+    if code == 200 and isinstance(data, dict):
+        return data
+    return JSONResponse({"error": err or f"server-manager api {code}"}, status_code=502)
+
+
+@app.post("/api/agent-runtimes/{runtime_id}/reconcile")
+async def api_agent_reconcile(runtime_id: str, request: Request):
+    user, role = current_user(request)
+    if not user or role not in CAN_RESTART:
+        return JSONResponse({"error": "role does not permit runtime control"}, status_code=403)
+    from agent_ui import sm_api
+
+    code, data, err = sm_api("POST", f"/api/v1/agent-runtimes/{runtime_id}/reconcile")
+    if code == 200 and isinstance(data, dict):
+        return data
+    return JSONResponse({"error": err or f"server-manager api {code}"}, status_code=502)
+
+
+@app.post("/api/agent-runtimes")
+async def api_agent_create(request: Request):
+    """+ New Agent wizard submission → the EXISTING ARM provisioning path."""
+    user, role = current_user(request)
+    if not user or role not in CAN_EDIT_DEPLOY:
+        return JSONResponse({"error": "role does not permit agent creation"}, status_code=403)
+    from agent_ui import sm_api
+
+    body = await request.json()
+    code, data, err = sm_api("POST", "/api/v1/agent-runtimes", body,
+                             timeout=900)
+    if code in (200, 202) and isinstance(data, dict):
+        audit(user, "agent_runtime_create", body.get("name", "?"), "ok", str(code))
+        return data
+    audit(user, "agent_runtime_create", body.get("name", "?"), "error", (err or str(code))[:200])
+    return JSONResponse({"error": err or f"server-manager api {code}"}, status_code=502)
+
+
 # ---------------------------------------------------------------- power & cost (Phase 5)
 
 def _pg():
