@@ -288,16 +288,24 @@ except Exception as _ad_err:  # pragma: no cover
 
 
 def _physical_host_for_ip(ip):
-    """Map a guest IP to its physical host label (MIAM site) via NODE_MAP-like grouping."""
-    if ip.startswith("10.0.20.16"):
+    """Map a guest IP to its physical host label (MIAM site).
+
+    Exact-IP checks FIRST: 2026-09-30 fleet-invisibility bug — the leading
+    ``ip.startswith("10.0.20.16")`` range check matched EVERY .161-.165 guest,
+    collapsing all hosts onto MIAM-00111 so _active_hosts() promoted only the
+    first match (VM102) and the dashboard rendered ONE inference card.
+    Only the genuinely ambiguous .16x pair (VM102/VM103 on MIAM-00111) uses a
+    range match, after the exact entries.
+    """
+    if ip == "10.0.20.168" or ip == "10.0.20.161":
         return "MIAM-00111"
-    if ip in ("10.0.20.162",):
+    if ip == "10.0.20.162":
         return "MIAM-00112"
-    if ip in ("10.0.20.163",):
+    if ip == "10.0.20.163":
         return "MIAM-00143"
-    if ip in ("10.0.20.164",):
+    if ip == "10.0.20.164":
         return "MIAM-00144"
-    if ip in ("10.0.20.165",):
+    if ip == "10.0.20.165":
         return "MIAM-00149"
     return ip
 
@@ -311,16 +319,18 @@ def _active_hosts():
         return list(VLLM_HOSTS)
     active = []
     inactive = []
-    promoted = set()
+    active_ips = set()
     for h in VLLM_HOSTS:
         phys = _physical_host_for_ip(h["ip"])
         db_active = _ad.active_ip_for(phys, fallback=None)
         if db_active == h["ip"]:
             active.append(h)
-            promoted.add(phys)
+            active_ips.add(h["ip"])
     for h in VLLM_HOSTS:
-        phys = _physical_host_for_ip(h["ip"])
-        if phys not in promoted:
+        # Demote NON-ACTIVE hosts to the end but never drop them: a rollback VM
+        # sharing its physical host with the active one must stay visible
+        # (2026-09-30 finding — the old phys-based check silently removed it).
+        if h["ip"] not in active_ips:
             inactive.append(h)
     return active + inactive
 
