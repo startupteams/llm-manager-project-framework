@@ -405,6 +405,29 @@ def api_status(request: Request):
             "ts": time.time()}
 
 
+# ---------------------------------------------------------------- Model Fleet (window-5 §3)
+
+@app.get("/api/fleet")
+def api_fleet(request: Request):
+    user, role = current_user(request)
+    if not user:
+        return JSONResponse({"error": "auth required"}, status_code=401)
+    from fleet_view import fleet_view
+
+    return fleet_view()
+
+
+@app.get("/admin/fleet", response_class=HTMLResponse)
+def admin_fleet(request: Request):
+    user, role = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return HTMLResponse(FLEET_HTML
+                        .replace("__VER__", APP_VERSION)
+                        .replace("__USER__", user)
+                        .replace("__ROLE__", role or ""))
+
+
 # ---------------------------------------------------------------- power & cost (Phase 5)
 
 def _pg():
@@ -2092,6 +2115,50 @@ def root():
     return RedirectResponse("/admin", status_code=302)
 
 
+FLEET_HTML = r"""<!doctype html><html><head><title>Model Fleet — LLM Manager</title><style>
+body{font-family:system-ui;background:#0d1117;color:#c9d1d9;margin:0;padding:1.2rem}
+a{color:#58a6ff}
+.bad{color:#f85149}.ok{color:#3fb950}.warn{color:#d29922}.muted{color:#8b949e}
+table.data{border-collapse:collapse;width:100%}
+table.data th,table.data td{border:1px solid #30363d;padding:.4rem .5rem;font-size:.82rem;text-align:left}
+th{background:#161b22}
+.st-SERVING{color:#3fb950;font-weight:600}.st-ONLINE_IDLE{color:#d29922}
+.st-STOPPED_EXPECTED{color:#8b949e}.st-UNREACHABLE{color:#f85149;font-weight:600}
+.st-MISCONFIGURED{color:#f0883e}.st-STALE{color:#d29922}
+details>summary{cursor:pointer;padding:.3rem 0}
+</style></head><body>
+<h1>Model Fleet <span style="font-size:.8rem;color:#8b949e">__VER__</span></h1>
+<div>__USER__ <span style="font-size:.8rem">__ROLE__</span> · <a href="/admin">← dashboard</a></div>
+<p class="muted" id="inv-src">Loading fleet…</p>
+<div id="fleet"></div>
+<p class="muted">Powered-off and unreachable VMs stay visible — fleet capacity is never hidden (window-5 §3.4).
+"VM powered on" and "model server healthy" are separate facts; see desired vs actual columns.</p>
+<script>
+async function loadFleet(){
+  const r=await fetch('/api/fleet');if(r.status===401){location='/login';return}
+  const d=await r.json();
+  document.getElementById('inv-src').textContent='inventory: '+d.inventory_source+' · states: '+
+    Object.entries(d.states).filter(([k,v])=>v>0).map(([k,v])=>k+'='+v).join(' · ');
+  document.getElementById('fleet').innerHTML=d.hosts.map(h=>`
+   <details ${h.state==='SERVING'?'':'open'}>
+    <summary><b>${h.name}</b> — <span class="st-${h.state}">● ${h.state}</span>
+      <span class="muted">${h.node?h.node+'/VM'+h.vmid:''} ${h.gpu_count??'?'}× ${h.gpu_model??''}</span></summary>
+    <table class="data">
+     <tr><th>runtime</th><td>probe=${h.probe_status} ${h.latency_ms??''}ms
+       ${h.probe_error?`<span class="bad">${h.probe_error}</span>`:''}</td></tr>
+     <tr><th>desired</th><td>power=${h.desired_power_state} · service=${h.desired_service_state} · mode=${h.management_mode||'—'}</td></tr>
+     <tr><th>serving now</th><td>${h.probe_model||'—'} · ctx=${h.probe_max_model_len??'—'}</td></tr>
+     <tr><th>registered models</th><td>${
+       (h.models||[]).map(m=>`${m.model}${m.is_alias?' (alias→'+(m.alias_target||'?')+')':''} `+
+        `<span class="muted">routable=${m.routable} health=${m.health} ctx=${m.context_limit??'—'} `+
+        `verified=${(m.last_verified||'?').slice(0,10)}</span>`).join('<br>')||'<span class="muted">none registered</span>'}</td></tr>
+     <tr><th>actions</th><td><a href="/admin">dashboard controls</a></td></tr>
+    </table>
+   </details>`).join('');
+}
+loadFleet();
+</script></body></html>"""
+
 DASHBOARD_HTML = r"""<!doctype html><html><head><title>LLM Manager</title><style>
 body{background:#0d1117;color:#e6edf3;font-family:system-ui;margin:0;padding:1.2rem}
 h1{font-size:1.2rem} h2{font-size:1rem;color:#58a6ff;margin:1.2rem 0 .5rem}
@@ -2118,6 +2185,7 @@ pre{background:#0d1117;padding:.6rem;border-radius:6px;overflow:auto;max-height:
 </div>
 
 <h2>Inference hosts</h2><div class="grid" id="hosts"></div>
+<p><a href="/admin/fleet" style="color:#58a6ff">→ Model Fleet (full inventory view)</a></p>
 
 <h2>API keys <span style="font-size:.75rem;color:#8b949e">(LiteLLM virtual keys · access: all currently hosted models · no default model — §v0.11 E1)</span></h2>
 <div class="card">
