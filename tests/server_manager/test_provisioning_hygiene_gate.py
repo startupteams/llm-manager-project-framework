@@ -33,6 +33,10 @@ class ImpostorVMProvider:
         self.inherited_static = list(inherited_static)
         self.agent_id = "agent-new-001"
 
+    def list_nodes(self):
+        # placement policy vantage: one healthy generic node available
+        return [("miam-00135", "online")]
+
     def next_vmid(self):
         return 300
 

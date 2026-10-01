@@ -75,6 +75,11 @@ class ProxmoxVMProvider:
         return payload.get("data", payload)
 
     # ------------------------------------------------------------ lifecycle
+    def list_nodes(self) -> list[tuple[str, str]]:
+        """[(node, status)] for placement policy (STEA-004 §5)."""
+        data = self._call("GET", "/nodes") or []
+        return [(d["node"], d.get("status", "unknown")) for d in data]
+
     def next_vmid(self) -> int:
         return int(self._call("GET", "/cluster/nextid"))
 
