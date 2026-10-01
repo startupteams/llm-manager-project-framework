@@ -2217,6 +2217,33 @@ def root():
     return RedirectResponse("/admin", status_code=302)
 
 
+# ---------------------------------------------------------------- Facility power & cost (STEA-004 §16)
+
+@app.get("/api/facility/power")
+def api_facility_power(request: Request):
+    """Per-channel + TOTAL MARION_IA_USA energy/cost (24h/30d), collector health,
+    stale-not-zero semantics. Authoritative PDU mapping (2026-10-01)."""
+    user, role = current_user(request)
+    if not user:
+        return JSONResponse({"error": "auth required"}, status_code=401)
+    from power_view import facility_power_view
+
+    return facility_power_view()
+
+
+@app.get("/admin/power", response_class=HTMLResponse)
+def admin_power(request: Request):
+    from power_view import POWER_HTML
+
+    user, role = current_user(request)
+    if not user:
+        return RedirectResponse("/login", status_code=302)
+    return HTMLResponse(POWER_HTML
+                        .replace("__VER__", APP_VERSION)
+                        .replace("__USER__", user)
+                        .replace("__ROLE__", role or ""))
+
+
 FLEET_HTML = r"""<!doctype html><html><head><title>Model Fleet — LLM Manager</title><style>
 body{font-family:system-ui;background:#0d1117;color:#c9d1d9;margin:0;padding:1.2rem}
 a{color:#58a6ff}
@@ -2287,7 +2314,8 @@ pre{background:#0d1117;padding:.6rem;border-radius:6px;overflow:auto;max-height:
 </div>
 
 <h2>Inference hosts</h2><div class="grid" id="hosts"></div>
-<p><a href="/admin/fleet" style="color:#58a6ff">→ Model Fleet (full inventory view)</a></p>
+<p><a href="/admin/fleet" style="color:#58a6ff">→ Model Fleet (full inventory view)</a> ·
+   <a href="/admin/power" style="color:#58a6ff">→ Power &amp; Cost (facility: PDUs + mini split + TOTAL)</a></p>
 
 <h2>API keys <span style="font-size:.75rem;color:#8b949e">(LiteLLM virtual keys · access: all currently hosted models · no default model — §v0.11 E1)</span></h2>
 <div class="card">
