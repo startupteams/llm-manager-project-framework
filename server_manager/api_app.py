@@ -29,6 +29,9 @@ from server_manager.llm_manager.api.pdu_routes import router as pdu_router  # no
 
 app.include_router(pdu_router)
 
+from server_manager.llm_manager.api.facility_power import router as facility_router  # noqa: E402
+app.include_router(facility_router)
+
 
 @app.get("/healthz")
 def healthz():
