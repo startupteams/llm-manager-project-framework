@@ -20,6 +20,10 @@ class FakeVMProvider:
         self.clone_calls = []
         self.destroyed = []
 
+    def list_nodes(self):
+        # placement policy vantage: one healthy generic node
+        return [("miam-00135", "online")]
+
     def next_vmid(self):
         return 200
 

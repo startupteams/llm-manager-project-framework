@@ -31,6 +31,7 @@ from server_manager.agent_runtime_manager.providers.proxmox_vm import (
     VMSpec,
     ownership_marker,
 )
+from server_manager.agent_runtime_manager.services.placement import select_node
 from server_manager.common.config.settings import get_settings
 
 log = logging.getLogger("arm.provisioning")
@@ -222,19 +223,43 @@ class ProvisioningService:
 
     def _provision_vm(self, session: SASession, job: ProvisioningJob, runtime: AgentRuntime) -> tuple[int, str]:
         s = get_settings()
+        # template selection from the runtime's recorded source (or the proven default)
+        tpl_source = runtime.template_source or "miam00111/qemu/121"
+        try:
+            tpl_node, tpl_path = tpl_source.split("/qemu/", 1)
+            spec_template_vmid = int(tpl_path)
+        except ValueError:
+            spec_template_node, spec_template_vmid = "miam00111", 121
+        else:
+            spec_template_node = tpl_node or "miam00111"
         self._step(session, job, 1, "VALIDATING")
         if runtime.acms_agent_id in ("", None):
             raise ValueError("acms_agent_id required (§9)")
         self._step(session, job, 1, "VALIDATING", "DONE")
         self._step(session, job, 2, "RESERVING", "DONE")
+        self._step(session, job, 3, "PLACING")
+        decision = select_node(
+            session,
+            self.provider,
+            runtime_class=runtime.runtime_class or "software_development_worker",
+            template_node=spec_template_node,
+        )
+        if decision.rejected or not decision.node:
+            self._step(session, job, 3, "PLACING", "FAILED", detail=decision.rejection_reason)
+            raise RuntimeError(
+                f"placement policy rejected provisioning: {decision.rejection_reason} (§5)"
+            )
+        node = decision.node
+        session.add(RuntimeEvent(actor="arm", action="placement_selected", runtime_id=runtime.runtime_id,
+                                 detail={"node": node, "score": decision.score, "reasons": decision.reasons}))
+        self._step(session, job, 3, "PLACING", "DONE", detail=node)
         self._step(session, job, 3, "CLONING_VM")
         vmid = self.provider.next_vmid()
-        node = "miam00111"  # template host — the clone targets this node
         spec = VMSpec(
             name=runtime.name,
             node=node,
-            template_vmid=121,
-            template_node=node,
+            template_vmid=spec_template_vmid,
+            template_node=spec_template_node,
             description_meta=ownership_marker(runtime, node, vmid, runtime.template_source or "miam00111/qemu/121"),
         )
         self.provider.clone_template(spec, vmid)
