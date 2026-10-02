@@ -98,6 +98,15 @@ def select_node(
     total_workers = _worker_counts_by_node(session)
     inference_workers = _inference_worker_counts_by_node(session)
 
+    # plan §26 W4 live-found: the golden template's root disk is node-local
+    # (testthin on miam00111) and cross-node clone 500s when that storage is
+    # inactive on the placed node. Sandboxes (non-critical dev VMs) pin to the
+    # TEMPLATE node — honest, safe, reversible; revisit when testthin is
+    # active cluster-wide or the template is replicated.
+    if runtime_class == "sandbox":
+        return PlacementDecision(node=template_node, score=100.0,
+                                 reasons=["sandbox_pinned_to_template_node"])
+
     scored: list[PlacementDecision] = []
     for node in _candidate_nodes(session, provider):
         reasons: list[str] = []

@@ -36,3 +36,19 @@ def test_clone_target_is_placed_node():
     assert body["target"] == "miam-00100"             # DEST = PLACED node (the fix)
     assert body["newid"] == 200
     assert body["full"] == 1
+
+
+def test_sandbox_placement_pins_to_template_node(arm_session):
+    # plan §26 live-found: node-local template storage -> sandboxes pin to the
+    # template node (cross-node clone would 500 when testthin inactive).
+    from server_manager.agent_runtime_manager.services.placement import select_node
+
+    class _FakeProvider:
+        def list_nodes(self):
+            return [("miam-00100", "online"), ("miam00111", "online")]
+
+    decision = select_node(arm_session, _FakeProvider(),
+                           runtime_class="sandbox", template_node="miam00111")
+    assert not decision.rejected
+    assert decision.node == "miam00111"
+    assert "sandbox_pinned_to_template_node" in decision.reasons
