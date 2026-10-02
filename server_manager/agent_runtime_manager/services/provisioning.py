@@ -292,6 +292,19 @@ class ProvisioningService:
 
         self._step(session, job, 4, "CONFIGURING_CLOUD_INIT")
         self.provider.configure_cloud_init(spec, vmid)
+        # W4.1 live-found: PVE assigns a NEW random MAC at START when net0
+        # carries none — a MAC read before boot is NOT the NIC the guest will
+        # use, so the DHCP reservation missed. Fix: pin the MAC explicitly at
+        # configure time (provider-visible, deterministic).
+        sandbox_mac = None
+        if runtime.runtime_class == "sandbox":
+            sandbox_mac = self.provider.generate_mac()
+        self.provider.configure_cloud_init(
+            spec, vmid,
+            extra=({"net0": f"virtio={sandbox_mac},bridge={spec.bridge}"} if sandbox_mac else None))
+        if sandbox_mac:
+            runtime.ownership_meta = dict(runtime.ownership_meta or {})
+            runtime.ownership_meta["sandbox_mac"] = sandbox_mac
         self._step(session, job, 4, "CONFIGURING_CLOUD_INIT", "DONE")
 
         # ---------------------------------------------------------- W4.1
@@ -309,12 +322,13 @@ class ProvisioningService:
             except Exception as e:  # import failure = misconfigured host, fail closed
                 raise RuntimeError(f"sandbox network gate unavailable: {e}") from None
             snw_enabled = get_settings().sandbox_network_enabled
-            mac = ""
-            cfg0 = self.provider.vm_config(node, vmid)
-            m0 = __import__("re").search(r"([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})",
-                                         cfg0.get("net0") or "")
-            if m0:
-                mac = m0.group(1)
+            mac = (runtime.ownership_meta or {}).get("sandbox_mac") or ""
+            if not mac:
+                cfg0 = self.provider.vm_config(node, vmid)
+                m0 = __import__("re").search(r"([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})",
+                                             cfg0.get("net0") or "")
+                if m0:
+                    mac = m0.group(1)
             if snw_enabled:
                 snw = SandboxNetworkService()
                 try:

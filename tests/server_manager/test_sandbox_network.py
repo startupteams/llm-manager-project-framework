@@ -190,8 +190,11 @@ class FakeSandboxProvider:
     def wait_clone_lock_release(self, node, vmid):
         pass
 
+    def generate_mac(self):
+        return "BC:24:11:AA:BB:7E"
+
     def configure_cloud_init(self, spec, vmid, extra=None):
-        pass
+        self.configured_net0 = (extra or {}).get("net0")
 
     def start(self, node, vmid):
         self.started = True
@@ -206,7 +209,7 @@ class FakeSandboxProvider:
         return {"description": json.dumps({
             "created_by_agent_runtime_manager": True,
             "acms_agent_id": self.agent_id,
-        }), "net0": "virtio,bridge=vmbr0,mac=DE:AD:BE:EF:00:42"}
+        }), "net0": "virtio=BC:24:11:AA:BB:7E,bridge=vmbr0"}
 
 
 def _svc(monkeypatch, fake, kea):
@@ -254,7 +257,7 @@ def test_gate_enabled_creates_reservation_before_boot(arm_session, monkeypatch):
         rt = job.runtime
         arm_session.refresh(rt)
         assert rt.ownership_meta["sandbox_ip"] == "10.0.20.222"
-        assert rt.ownership_meta["sandbox_mac"] == "de:ad:be:ef:00:42"
+        assert rt.ownership_meta["sandbox_mac"] == "bc:24:11:aa:bb:7e"
         assert rt.ownership_meta["sandbox_reservation_uuid"] in kea.res
         # step recorded
         steps = {s.step: s.state for s in job.steps}
