@@ -83,6 +83,14 @@ class ProxmoxVMProvider:
     def next_vmid(self) -> int:
         return int(self._call("GET", "/cluster/nextid"))
 
+    @staticmethod
+    def generate_mac() -> str:
+        """Deterministic, locally-administered PVE-style MAC (bc:24:11 prefix)
+        for explicit net0 pinning (W4.1: PVE assigns a NEW random MAC at START
+        when net0 carries none — a pre-boot MAC read is then wrong)."""
+        import secrets as _s
+        return "BC:24:11:" + ":".join(f"{_s.randbelow(256):02X}" for _ in range(3))
+
     def template_storage(self, spec: "VMSpec") -> str:
         """The node-local storage backing the template's root disk (live-found
         2026-10-02: template 121 = testthin). Empty string if undetermined."""
