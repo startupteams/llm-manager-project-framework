@@ -166,7 +166,7 @@ class KeaReservationClient:
 
     def _post_json(self, path: str, payload: dict | None = None, _retried: bool = False) -> dict:
         if not self._csrf:
-            ui = self._get("/ui/kea/dhcpv4")
+            ui = self._get("/ui/kea/dhcp/v4")
             m = re.search(r'setRequestHeader\("X-CSRFToken",\s*"([^"]+)"', ui)
             if not m:
                 raise SandboxNetworkError("OPNsense CSRF token not found")
