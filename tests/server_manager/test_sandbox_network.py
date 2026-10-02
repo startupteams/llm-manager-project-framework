@@ -365,3 +365,40 @@ def test_destroy_releases_reservation(arm_session, monkeypatch):
         assert "10.0.20.222" not in {r["ip_address"] for r in kea.reservations()}
     finally:
         v1mod.get_session_factory = original
+
+
+# ------------------------------------------------------- login/retry behavior
+def test_post_json_relogin_on_html(monkeypatch):
+    """First API call on a fresh session receives the LOGIN PAGE (HTML) — the
+    client must login via the shared cookie jar and retry once (live-found
+    2026-10-02)."""
+    class _Resp:
+        def __init__(self, body):
+            self.body = body
+        def read(self):
+            return self.body.encode()
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+
+    opened = {"n": 0}
+
+    class _Opener:
+        def open(self, req, timeout=None):
+            opened["n"] += 1
+            if opened["n"] == 1:
+                return _Resp("<!doctype html><html>login page</html>")
+            return _Resp('{"rows": [], "total": 0}')
+
+    c = KeaReservationClient("http://opn.test", "pw")
+    c._csrf = "tok"
+    monkeypatch.setattr(KeaReservationClient, "_opener", lambda self: _Opener())
+    monkeypatch.setattr(KeaReservationClient, "_get",
+                        lambda self, path:
+                        'page with setRequestHeader("X-CSRFToken", "tok2")')
+    monkeypatch.setattr(KeaReservationClient, "_login",
+                        lambda self: None)  # session established on retry
+    out = c._post_json("/api/kea/dhcpv4/search_reservation/")
+    assert out == {"rows": [], "total": 0}
+    assert opened["n"] == 2  # HTML → login → retried once

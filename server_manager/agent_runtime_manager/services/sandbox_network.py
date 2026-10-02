@@ -101,19 +101,26 @@ class KeaReservationClient:
 
     # -------------------------------------------------------------- session
     def _login(self) -> None:
-        page = self._get("/index.php", login_page=True)
+        """Session login through the SHARED cookie opener (the session cookie
+        must land in the same jar the API calls use — live-found 2026-10-02:
+        logging in on a bare urlopen without the jar = 403 on the first API
+        call because the session cookie never persisted)."""
+        page = self._get("/index.php")
         m = re.search(r'name="([A-Za-z0-9_]{15,40})"\s+value="([^"]{10,80})"', page)
         if not m:
             raise SandboxNetworkError("OPNsense login page CSRF token not found")
         data = urllib.parse.urlencode({
             "usernamefld": "root", "passwordfld": self.password,
             "login": "1", m.group(1): m.group(2)}).encode()
-        req = urllib.request.Request(f"{self.base}/index.php", data=data, method="POST")
+        req = urllib.request.Request(f"{self.base}/index.php", data=data)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                resp.read()
+            with self._opener().open(req, timeout=self.timeout) as resp:
+                body = resp.read().decode(errors="replace")
         except urllib.error.HTTPError as e:
             raise SandboxNetworkError(f"OPNsense login failed: HTTP {e.code}") from e
+        if "logout" not in body.lower():
+            raise SandboxNetworkError("OPNsense login did not establish a session")
+        self._csrf = ""
         # capture cookie jar from Set-Cookie headers
         # (urllib needs a CookieJar; simplest: use a shared opener with HTTPCookieProcessor)
         # NOTE: handled in _opener()
@@ -126,12 +133,12 @@ class KeaReservationClient:
             self._cj = cj
         return self._openr
 
-    def _get(self, path: str, *, login_page: bool = False) -> str:
+    def _get(self, path: str) -> str:
         req = urllib.request.Request(f"{self.base}{path}", method="GET")
         with self._opener().open(req, timeout=self.timeout) as resp:
             return resp.read().decode(errors="replace")
 
-    def _post_json(self, path: str, payload: dict | None = None) -> dict:
+    def _post_json(self, path: str, payload: dict | None = None, _retried: bool = False) -> dict:
         if not self._csrf:
             ui = self._get("/ui/kea/dhcpv4")
             m = re.search(r'setRequestHeader\("X-CSRFToken",\s*"([^"]+)"', ui)
@@ -142,8 +149,28 @@ class KeaReservationClient:
         req = urllib.request.Request(f"{self.base}{path}", data=data, method="POST",
                                      headers={"Content-Type": "application/json",
                                               "X-CSRFToken": self._csrf})
-        with self._opener().open(req, timeout=self.timeout) as resp:
-            return json.loads(resp.read().decode() or "{}")
+        try:
+            with self._opener().open(req, timeout=self.timeout) as resp:
+                raw = resp.read().decode(errors="replace")
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403) and not _retried:
+                self._login(); self._csrf = ""
+                return self._post_json(path, payload, _retried=True)
+            raise SandboxNetworkError(f"OPNsense API {path} -> HTTP {e.code}") from e
+        # an unauthenticated session receives the LOGIN PAGE (HTML), not JSON —
+        # login + retry once (live-found 2026-10-02: first API call after boot).
+        if raw.lstrip()[:1] not in "[{" and ("<html" in raw[:400].lower() or not raw.strip()):
+            if _retried:
+                raise SandboxNetworkError(
+                    f"OPNsense API {path} returned non-JSON even after login "
+                    f"(len={len(raw)})")
+            self._login(); self._csrf = ""
+            return self._post_json(path, payload, _retried=True)
+        try:
+            return json.loads(raw or "{}")
+        except json.JSONDecodeError as e:
+            raise SandboxNetworkError(
+                f"OPNsense API {path} returned invalid JSON ({e}); head={raw[:120]!r}") from e
 
     def ensure_session(self) -> None:
         # a cheap authenticated probe; re-login when the probe fails
