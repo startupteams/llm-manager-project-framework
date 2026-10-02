@@ -105,10 +105,36 @@ class KeaReservationClient:
         must land in the same jar the API calls use — live-found 2026-10-02:
         logging in on a bare urlopen without the jar = 403 on the first API
         call because the session cookie never persisted)."""
-        page = self._get("/index.php")
-        m = re.search(r'name="([A-Za-z0-9_]{15,40})"\s+value="([^"]{10,80})"', page)
+        # OPNsense occasionally serves a JS-shell variant of the login page on
+        # the first hit (live-found 2026-10-02: the hidden CSRF field is absent
+        # but the X-CSRFToken value is present in the page JS) — accept EITHER
+        # shape, retrying briefly before failing.
+        m = None
+        page = ""
+        for _ in range(3):
+            page = self._get("/index.php")
+            m = (re.search(r'name="([A-Za-z0-9_]{15,40})"\s+value="([^"]{10,80})"', page)
+                 or re.search(r'X-CSRFToken",\s*"([A-Za-z0-9_-]{10,80})"', page))
+            if m:
+                break
+            time.sleep(1)
         if not m:
-            raise SandboxNetworkError("OPNsense login page CSRF token not found")
+            raise SandboxNetworkError(
+                f"OPNsense login page CSRF token not found (page {len(page)}B)")
+        tok_name = m.group(1) if "X-CSRFToken" not in m.group(0) else None
+        login_fields: dict[str, str] = {"usernamefld": "root", "passwordfld": self.password,
+                                        "login": "1"}
+        if tok_name:
+            login_fields[tok_name] = m.group(2)
+        else:
+            # JS-shell variant: fetch a form-backed page for the hidden pair
+            page2 = self._get("/index.php")
+            m2 = re.search(r'name="([A-Za-z0-9_]{15,40})"\s+value="([^"]{10,80})"', page2)
+            if not m2:
+                raise SandboxNetworkError("OPNsense login CSRF pair not found (both shapes)")
+            login_fields[m2.group(1)] = m2.group(2)
+        data = urllib.parse.urlencode(login_fields).encode()
+        req = urllib.request.Request(f"{self.base}/index.php", data=data)
         data = urllib.parse.urlencode({
             "usernamefld": "root", "passwordfld": self.password,
             "login": "1", m.group(1): m.group(2)}).encode()
