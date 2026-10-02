@@ -40,6 +40,12 @@ class ImpostorVMProvider:
     def next_vmid(self):
         return 300
 
+    def template_storage(self, spec):
+        return getattr(self, "_fake_template_storage", "testthin")
+
+    def storage_active(self, node, storage):
+        return True
+
     def clone_template(self, spec, new_vmid):
         pass
 

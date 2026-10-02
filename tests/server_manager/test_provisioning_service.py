@@ -27,6 +27,12 @@ class FakeVMProvider:
     def next_vmid(self):
         return 200
 
+    def template_storage(self, spec):
+        return getattr(self, "_fake_template_storage", "testthin")
+
+    def storage_active(self, node, storage):
+        return True
+
     def clone_template(self, spec, new_vmid):
         self.clone_calls.append((spec.name, new_vmid))
 

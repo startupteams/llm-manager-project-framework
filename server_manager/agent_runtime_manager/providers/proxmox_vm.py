@@ -83,6 +83,22 @@ class ProxmoxVMProvider:
     def next_vmid(self) -> int:
         return int(self._call("GET", "/cluster/nextid"))
 
+    def template_storage(self, spec: "VMSpec") -> str:
+        """The node-local storage backing the template's root disk (live-found
+        2026-10-02: template 121 = testthin). Empty string if undetermined."""
+        cfg = self._call("GET", f"/nodes/{spec.template_node}/qemu/{spec.template_vmid}/config") or {}
+        for k, v in cfg.items():
+            if k.startswith(("scsi", "virtio", "sata", "ide")) and isinstance(v, str) and ":" in v:
+                return v.split(":", 1)[0]
+        return ""
+
+    def storage_active(self, node: str, storage: str) -> bool:
+        rows = self._call("GET", f"/nodes/{node}/storage") or []
+        for s in rows:
+            if s.get("storage") == storage:
+                return bool(s.get("active"))
+        return False
+
     def clone_template(self, spec: VMSpec, new_vmid: int) -> None:
         # target = the PLACED node (spec.node) — the new VM must LAND on the
         # placement-policy node. Live-found 2026-10-02: target=template_node

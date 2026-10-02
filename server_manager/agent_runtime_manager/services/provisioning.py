@@ -274,6 +274,16 @@ class ProvisioningService:
             template_node=spec_template_node,
             description_meta=ownership_marker(runtime, node, vmid, runtime.template_source or "miam00111/qemu/121"),
         )
+        # LIVE-FOUND 2026-10-02: cross-node full clone 500s when the template's
+        # node-local storage is not ACTIVE on the target node ("can't clone VM
+        # to node X (VM uses local storage...)"). Check BEFORE the clone and
+        # fail closed with an honest placement rejection (job FAILED; retry
+        # after the storage is active or the template is replicated).
+        tstore = self.provider.template_storage(spec)
+        if tstore and not self.provider.storage_active(node, tstore):
+            raise RuntimeError(
+                f"template storage {tstore!r} not active on placed node {node!r}; "
+                "cross-node clone would fail (live-found constraint, plan §26)")
         self.provider.clone_template(spec, vmid)
         self.provider.wait_clone_lock_release(node, vmid)
         session.add(RuntimeEvent(actor="arm", action="vm_cloned", runtime_id=runtime.runtime_id,
