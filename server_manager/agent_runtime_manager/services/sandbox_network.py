@@ -116,12 +116,15 @@ class KeaReservationClient:
         # shape (live-found 2026-10-02: pair-less posts → login 403/CSRF miss).
         m = None
         page = ""
-        for _ in range(5):
+        # OPNsense serves a JS-shell without the csrf pair when a session for
+        # this source is cooling down / mid-handshake; the full form reappears
+        # within seconds. Retry generously (12x2s ≈ 24s) before failing.
+        for _ in range(12):
             page = self._get("/index.php")
             m = re.search(r'name="([A-Za-z0-9_]{15,40})"\s+value="([^"]{10,80})"', page)
             if m:
                 break
-            time.sleep(1)
+            time.sleep(2)
         if not m:
             raise SandboxNetworkError(
                 f"OPNsense login CSRF pair not found after retries (page {len(page)}B)")
