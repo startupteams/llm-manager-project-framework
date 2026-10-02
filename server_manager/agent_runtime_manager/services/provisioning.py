@@ -11,7 +11,7 @@ import logging
 import secrets as pysecrets
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session as SASession
@@ -48,6 +48,8 @@ class ProvisionRequest:
     model_route: str | None = None
     bridge_profile: dict | None = None
     desired_state: RuntimeState = RuntimeState.DESIRED_RUNNING
+    # plan §26 sandbox TTL (hours); applied only when runtime_class == "sandbox"
+    sandbox_ttl_hours: int | None = None
     # template selection (defaults to the proven Hermes golden template)
     template_vmid: int = 121
     template_node: str = "miam00111"
@@ -80,6 +82,16 @@ class ProvisioningService:
             template_source=f"{req.template_node}/qemu/{req.template_vmid}",
             ownership_meta={"bridge_profile": req.bridge_profile or {}},
         )
+        # plan §26: sandbox TTL stamping — only the "sandbox" class carries a
+        # TTL; bounded by settings (default 8h, max 72h).
+        if req.runtime_class == "sandbox":
+            s = get_settings()
+            hours = req.sandbox_ttl_hours or s.arm_sandbox_default_ttl_hours
+            hours = max(1, min(int(hours), s.arm_sandbox_max_ttl_hours))
+            runtime.sandbox_expires_at = datetime.now(timezone.utc) + timedelta(hours=hours)
+            runtime.ownership_meta = dict(runtime.ownership_meta or {})
+            runtime.ownership_meta["kind"] = "sandbox"
+            runtime.ownership_meta["ttl_hours"] = hours
         session.add(runtime)
         session.flush()  # assign runtime.runtime_id (Python-side default) before FK use
         job = ProvisioningJob(

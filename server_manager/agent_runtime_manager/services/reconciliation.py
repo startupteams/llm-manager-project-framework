@@ -294,8 +294,34 @@ class ReconciliationService:
         session.flush()
 
     # ------------------------------------------------------------- loop
+    def expire_stale_sandboxes(self, session: SASession) -> list[dict]:
+        """plan §26 TTL sweep: runtime_class="sandbox" rows whose
+        sandbox_expires_at has passed → desired_state DESIRED_DESTROYED +
+        RuntimeEvent. API-ONLY flip (the reconciler never destroys VMs — the
+        desired-state machine + ownership verification own the actual teardown).
+        Returns the flipped rows (for audit/test visibility)."""
+        now = self._now()
+        stale = session.execute(
+            select(AgentRuntime).where(
+                AgentRuntime.runtime_class == "sandbox",
+                AgentRuntime.sandbox_expires_at.is_not(None),
+                AgentRuntime.sandbox_expires_at < now,
+                AgentRuntime.desired_state.notin_(
+                    [RuntimeState.DESIRED_DESTROYED]),
+            )
+        ).scalars().all()
+        flipped = []
+        for r in stale:
+            r.desired_state = RuntimeState.DESIRED_DESTROYED
+            self._audit(session, r, "sandbox_ttl_expired", "ok",
+                        {"expired_at": r.sandbox_expires_at.isoformat() if r.sandbox_expires_at else None})
+            flipped.append({"runtime_id": str(r.runtime_id), "name": r.name})
+        return flipped
+
     def reconcile_all(self, session: SASession, limit: int = 20) -> list[ReconcileResult]:
-        """One pass over all ARM-owned runtimes (excluding DESIRED_DESTROYED)."""
+        """One pass over all ARM-owned runtimes (excluding DESIRED_DESTROYED).
+        TTL sweep runs FIRST so expired sandboxes converge in the same pass."""
+        self.expire_stale_sandboxes(session)
         rows = session.execute(
             select(AgentRuntime).where(
                 AgentRuntime.desired_state != RuntimeState.DESIRED_DESTROYED,

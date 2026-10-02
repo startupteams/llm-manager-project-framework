@@ -69,6 +69,10 @@ class Settings:
     # --- ownership safety (§8): protected VMs are NEVER destroyable ---
     protected_vmids: set[int] = field(default_factory=set)
 
+    # --- sandbox TTL (plan §26): hours for runtime_class="sandbox" ---
+    arm_sandbox_default_ttl_hours: int = 8
+    arm_sandbox_max_ttl_hours: int = 72
+
     def llm_dsn(self) -> str:
         return (
             f"host={self.llm_pg_host} port={self.llm_pg_port} dbname={self.llm_pg_db} "
@@ -85,6 +89,18 @@ class Settings:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     s = Settings()
+
+    # sandbox TTL env overrides (plan §26) — read per-call so tests/deploys can
+    # tune them without re-importing the module
+    try:
+        s.arm_sandbox_default_ttl_hours = int(os.environ.get(
+            "SERVER_MANAGER_ARM_SANDBOX_DEFAULT_TTL_HOURS",
+            str(s.arm_sandbox_default_ttl_hours)))
+        s.arm_sandbox_max_ttl_hours = int(os.environ.get(
+            "SERVER_MANAGER_ARM_SANDBOX_MAX_TTL_HOURS",
+            str(s.arm_sandbox_max_ttl_hours)))
+    except ValueError:
+        pass
 
     pg = _from_secrets_file(
         os.environ.get("SERVER_MANAGER_PG_CREDS_FILE", "/etc/llm-manager/secrets/pg_app_creds"),

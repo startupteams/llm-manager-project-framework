@@ -108,6 +108,11 @@ class AgentRuntime(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     recovery_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
+    # §26 sandbox TTL — set when runtime_class="sandbox"; the reconciler sweep
+    # flips expired sandboxes to DESIRED_DESTROYED (API-only; nothing is
+    # auto-deleted from PVE).
+    sandbox_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     jobs: Mapped[list["ProvisioningJob"]] = relationship(back_populates="runtime", lazy="selectin")
 
 
