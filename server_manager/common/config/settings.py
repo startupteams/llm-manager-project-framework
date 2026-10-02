@@ -73,6 +73,15 @@ class Settings:
     arm_sandbox_default_ttl_hours: int = 8
     arm_sandbox_max_ttl_hours: int = 72
 
+    # --- sandbox network isolation (plan §W4.1): OPNsense/Kea reservations ---
+    # Occupancy-verified 2026-10-02: dedicated block OUTSIDE the general pool
+    # tails and clear of all statics (see STEA-004 OCCUPANCY-EVIDENCE-W41.md).
+    sandbox_opnsense_url: str = "http://10.0.10.1"
+    sandbox_opnsense_password: str = ""  # from secrets file, never Git
+    sandbox_dhcp_range: str = "10.0.20.222 - 10.0.20.249"
+    sandbox_kea_subnet_uuid: str = ""  # optional explicit subnet selection
+    sandbox_network_enabled: int = 0   # W4.1: 1 = reservations live (unpause), 0 = sandboxes blocked
+
     def llm_dsn(self) -> str:
         return (
             f"host={self.llm_pg_host} port={self.llm_pg_port} dbname={self.llm_pg_db} "
@@ -101,6 +110,25 @@ def get_settings() -> Settings:
             str(s.arm_sandbox_max_ttl_hours)))
     except ValueError:
         pass
+
+    # Sandbox network gate (plan §W4.1)
+    s.sandbox_opnsense_url = os.environ.get("SERVER_MANAGER_SANDBOX_OPNSENSE_URL", s.sandbox_opnsense_url)
+    s.sandbox_dhcp_range = os.environ.get("SERVER_MANAGER_SANDBOX_DHCP_RANGE", s.sandbox_dhcp_range)
+    s.sandbox_kea_subnet_uuid = os.environ.get("SERVER_MANAGER_SANDBOX_KEA_SUBNET_UUID", s.sandbox_kea_subnet_uuid)
+    try:
+        s.sandbox_network_enabled = int(os.environ.get("SERVER_MANAGER_SANDBOX_NETWORK_ENABLED",
+                                                       str(s.sandbox_network_enabled)))
+    except ValueError:
+        pass
+    snw = _from_secrets_file(
+        os.environ.get("SERVER_MANAGER_SANDBOX_SECRETS_FILE",
+                       "/etc/llm-manager/secrets/sandbox_network"),
+        ["OPNSENSE_PASSWORD", "SANDBOX_DHCP_RANGE", "OPNSENSE_URL"])
+    s.sandbox_opnsense_password = os.environ.get("SERVER_MANAGER_SANDBOX_OPNSENSE_PASSWORD") or snw.get("OPNSENSE_PASSWORD", "")
+    if snw.get("OPNSENSE_URL"):
+        s.sandbox_opnsense_url = snw["OPNSENSE_URL"]
+    if snw.get("SANDBOX_DHCP_RANGE"):
+        s.sandbox_dhcp_range = snw["SANDBOX_DHCP_RANGE"]
 
     pg = _from_secrets_file(
         os.environ.get("SERVER_MANAGER_PG_CREDS_FILE", "/etc/llm-manager/secrets/pg_app_creds"),

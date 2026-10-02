@@ -294,8 +294,68 @@ class ProvisioningService:
         self.provider.configure_cloud_init(spec, vmid)
         self._step(session, job, 4, "CONFIGURING_CLOUD_INIT", "DONE")
 
+        # ---------------------------------------------------------- W4.1
+        # Sandbox DHCP isolation gate: BEFORE the sandbox's first network
+        # boot, pin the clone's MAC to a dedicated sandbox-pool address via a
+        # Kea reservation (fail-closed). Read the post-clone MAC from the PVE
+        # config (PVE assigns a fresh random MAC on full clone), create the
+        # reservation, verify, and only then boot. No reservation → no boot;
+        # pool exhausted → job FAILED (never borrow from the general pool).
+        if runtime.runtime_class == "sandbox":
+            self._step(session, job, 4, "SANDBOX_DHCP_RESERVE")
+            try:
+                from server_manager.agent_runtime_manager.services.sandbox_network import (
+                    SandboxNetworkError, SandboxNetworkService)
+            except Exception as e:  # import failure = misconfigured host, fail closed
+                raise RuntimeError(f"sandbox network gate unavailable: {e}") from None
+            snw_enabled = get_settings().sandbox_network_enabled
+            mac = ""
+            cfg0 = self.provider.vm_config(node, vmid)
+            m0 = __import__("re").search(r"([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})",
+                                         cfg0.get("net0") or "")
+            if m0:
+                mac = m0.group(1)
+            if snw_enabled:
+                snw = SandboxNetworkService()
+                try:
+                    ip_r, existing = snw.allocate()
+                    rec = snw.reserve_for_mac(
+                        ip_r, mac, runtime.name or f"sbx-{vmid}",
+                        work_uid=str((runtime.ownership_meta or {}).get("work_uid") or runtime.provisioning_request_id),
+                        agent_name=str(runtime.acms_agent_id)[:48],
+                        existing_uuid=existing)
+                    snw.verify_reserved(ip_r)
+                    runtime.ownership_meta = dict(runtime.ownership_meta or {})
+                    runtime.ownership_meta["sandbox_ip"] = rec.ip
+                    runtime.ownership_meta["sandbox_mac"] = rec.mac
+                    runtime.ownership_meta["sandbox_reservation_uuid"] = rec.uuid
+                    session.add(RuntimeEvent(actor="arm", action="sandbox_reservation_created",
+                                             runtime_id=runtime.runtime_id, result="ok",
+                                             detail={"ip": rec.ip, "mac": rec.mac,
+                                                     "reservation_uuid": rec.uuid}))
+                except SandboxNetworkError as e:
+                    self._step(session, job, 4, "SANDBOX_DHCP_RESERVE", "FAILED", detail=str(e)[:300])
+                    session.add(RuntimeEvent(actor="arm", action="sandbox_reservation_failed",
+                                             runtime_id=runtime.runtime_id, result="error",
+                                             detail={"error": str(e)[:400], "vmid": vmid, "mac": mac}))
+                    raise RuntimeError(
+                        f"sandbox DHCP reservation failed (fail-closed, no boot): {e}") from None
+            else:
+                # Gate disabled: refuse to boot sandbox (W4.1 policy — sandbox
+                # create stays paused until the network gate is live).
+                self._step(session, job, 4, "SANDBOX_DHCP_RESERVE", "FAILED",
+                           detail="sandbox network gate disabled (SERVER_MANAGER_SANDBOX_NETWORK_ENABLED!=1)")
+                raise RuntimeError(
+                    "sandbox provisioning blocked: DHCP isolation gate disabled (W4.1)")
+            self._step(session, job, 4, "SANDBOX_DHCP_RESERVE", "DONE",
+                       detail=str((runtime.ownership_meta or {}).get("sandbox_ip")))
+
         self._step(session, job, 5, "BOOTING")
-        self._step(session, job, 5, "BOOTING")
+        # W4.1 live-gap fix: the PVE full clone lands STOPPED — the sandbox
+        # must be STARTED before the guest can DHCP (the W4 probe hit this:
+        # 'no guest IP after boot' because nothing started the VM; the VM was
+        # started manually and then leased). Owned VM (created this job) → start.
+        self.provider.start(node, vmid)
         ip = self.provider.wait_for_ip(node, vmid, max_s=420)
         if not ip:
             raise RuntimeError("no guest IP after boot (420s)")

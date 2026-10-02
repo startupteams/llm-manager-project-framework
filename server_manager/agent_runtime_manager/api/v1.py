@@ -118,6 +118,10 @@ class RuntimeOut(BaseModel):
     last_reconcile_at: str | None
     last_error: str | None
     recovery_count: int
+    # W4.1 lease visibility (sandbox class): reserved DHCP identity
+    sandbox_ip: str | None = None
+    sandbox_mac: str | None = None
+    sandbox_reservation_uuid: str | None = None
     api_contract_version: str = API_CONTRACT_VERSION
 
 
@@ -145,6 +149,9 @@ def _runtime_out(r: AgentRuntime) -> RuntimeOut:
         last_reconcile_at=r.last_reconcile_at.isoformat() if r.last_reconcile_at else None,
         last_error=r.last_error,
         recovery_count=r.recovery_count or 0,
+        sandbox_ip=(r.ownership_meta or {}).get("sandbox_ip"),
+        sandbox_mac=(r.ownership_meta or {}).get("sandbox_mac"),
+        sandbox_reservation_uuid=(r.ownership_meta or {}).get("sandbox_reservation_uuid"),
     )
 
 
@@ -309,6 +316,23 @@ def destroy_agent_runtime(runtime_id: str, ident: ServiceIdentity = Depends(_aut
         r.node = None
         session.add(RuntimeEvent(actor=ident.service, action="destroy_complete", runtime_id=r.runtime_id,
                                  detail={"note": "ACMS persistent identity/history NOT deleted"}))
+        # W4.1: release the sandbox DHCP reservation so the pool address is
+        # reusable. Failure is durable-audited, never blocks the destroy.
+        meta = r.ownership_meta or {}
+        sip = meta.get("sandbox_ip")
+        sres = meta.get("sandbox_reservation_uuid")
+        if sip and sres:
+            try:
+                from server_manager.agent_runtime_manager.services.sandbox_network import (
+                    SandboxNetworkService)
+                SandboxNetworkService().release(str(sip))
+                session.add(RuntimeEvent(actor=ident.service, action="sandbox_reservation_released",
+                                         runtime_id=r.runtime_id, result="ok",
+                                         detail={"ip": str(sip)}))
+            except Exception as e:  # noqa: BLE001 — release failure is audited, not fatal
+                session.add(RuntimeEvent(actor=ident.service, action="sandbox_reservation_release_failed",
+                                         runtime_id=r.runtime_id, result="error",
+                                         detail={"ip": str(sip), "error": str(e)[:300]}))
         session.commit()
         return {"status": "DESTROYED", "runtime_id": runtime_id,
                 "note": "runtime destroyed; ACMS persistent identity/history preserved"}
