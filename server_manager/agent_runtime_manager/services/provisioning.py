@@ -50,8 +50,12 @@ class ProvisionRequest:
     desired_state: RuntimeState = RuntimeState.DESIRED_RUNNING
     # plan §26 sandbox TTL (hours); applied only when runtime_class == "sandbox"
     sandbox_ttl_hours: int | None = None
-    # template selection (defaults to the proven Hermes golden template)
-    template_vmid: int = 121
+    # template selection: the golden Hermes worker template (VM135 — carries
+    # the clone-time re-identify unit; VM121 is the RETIRED agent-manager
+    # template whose static netplan clones inherit — live-found in W4.1
+    # acceptance: a sandbox cloned from 121 self-assigned the template's
+    # static .203 without ever DHCP-ing).
+    template_vmid: int = 135
     template_node: str = "miam00111"
 
 
@@ -236,12 +240,12 @@ class ProvisioningService:
     def _provision_vm(self, session: SASession, job: ProvisioningJob, runtime: AgentRuntime) -> tuple[int, str]:
         s = get_settings()
         # template selection from the runtime's recorded source (or the proven default)
-        tpl_source = runtime.template_source or "miam00111/qemu/121"
+        tpl_source = runtime.template_source or "miam00111/qemu/135"
         try:
             tpl_node, tpl_path = tpl_source.split("/qemu/", 1)
             spec_template_vmid = int(tpl_path)
         except ValueError:
-            spec_template_node, spec_template_vmid = "miam00111", 121
+            spec_template_node, spec_template_vmid = "miam00111", 135
         else:
             spec_template_node = tpl_node or "miam00111"
         self._step(session, job, 1, "VALIDATING")
