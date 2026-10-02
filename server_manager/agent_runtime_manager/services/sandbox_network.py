@@ -135,10 +135,6 @@ class KeaReservationClient:
             login_fields[m2.group(1)] = m2.group(2)
         data = urllib.parse.urlencode(login_fields).encode()
         req = urllib.request.Request(f"{self.base}/index.php", data=data)
-        data = urllib.parse.urlencode({
-            "usernamefld": "root", "passwordfld": self.password,
-            "login": "1", m.group(1): m.group(2)}).encode()
-        req = urllib.request.Request(f"{self.base}/index.php", data=data)
         try:
             with self._opener().open(req, timeout=self.timeout) as resp:
                 body = resp.read().decode(errors="replace")
