@@ -23,3 +23,70 @@ __pycache__/
 .venv/
 .venv*/
 dist/
+
+# BEGIN STARTUPTEAMS MANAGED SAFETY BLOCK
+# Managed portable baseline. Preserve project-specific rules above/below this block.
+
+# Secrets / credentials
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt.key
+credentials/
+secrets/
+auth.json
+*credentials*.json
+*token*.txt
+*secret*.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / JS
+node_modules/
+.next/
+dist/
+build/
+coverage/
+.npm/
+.yarn/cache/
+.pnpm-store/
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Runtime / logs / temporary
+*.log
+*.pid
+*.tmp
+*.temp
+.cache/
+tmp/
+
+# Local agent/runtime state that must not be committed by default
+.claude/local*
+.hermes-local/
+
+# Raw personal archives are local evidence, not project source
+AI-Archives/
+chatgpt-export*/
+
+# END STARTUPTEAMS MANAGED SAFETY BLOCK
