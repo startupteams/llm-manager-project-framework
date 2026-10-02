@@ -84,8 +84,14 @@ class ProxmoxVMProvider:
         return int(self._call("GET", "/cluster/nextid"))
 
     def clone_template(self, spec: VMSpec, new_vmid: int) -> None:
+        # target = the PLACED node (spec.node) — the new VM must LAND on the
+        # placement-policy node. Live-found 2026-10-02: target=template_node
+        # left the clone on the template node while the lock-wait polled the
+        # placed node → 240s timeout → FAILED job (orphan VM on the template
+        # node). PVE clone API: source = template_node/qemu/{template_vmid},
+        # destination node = target.
         self._call("POST", f"/nodes/{spec.template_node}/qemu/{spec.template_vmid}/clone",
-                   {"newid": new_vmid, "name": spec.name[:63], "full": 1, "target": spec.template_node}, timeout=600)
+                   {"newid": new_vmid, "name": spec.name[:63], "full": 1, "target": spec.node}, timeout=600)
 
     def wait_clone_lock_release(self, node: str, vmid: int, max_s: int = 240) -> None:
         """Wait for the post-clone lock release.
