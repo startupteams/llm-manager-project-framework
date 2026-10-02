@@ -29,6 +29,7 @@ from server_manager.agent_runtime_manager.providers.proxmox_vm import (
 )
 from server_manager.agent_runtime_manager.services.provisioning import ProvisionRequest, ProvisioningService
 from server_manager.common.auth.service_tokens import require_identity
+from server_manager.common.config.settings import get_settings
 from server_manager.common.db.session import get_session_factory
 
 router = APIRouter(prefix="/api/v1", tags=["server-manager-v1"])
@@ -58,6 +59,14 @@ class CreateRuntimeRequest(BaseModel):
     model_route: str | None = None
     bridge_profile: dict[str, Any] | None = None
     desired_state: str = "DESIRED_RUNNING"
+    # plan §26 sandbox: TTL hours for runtime_class="sandbox" (ignored for
+    # other classes); None = settings default. Bounded by max TTL.
+    sandbox_ttl_hours: int | None = Field(default=None, ge=1, le=24 * 30)
+
+
+class ExtendTtlRequest(BaseModel):
+    ttl_hours: int = Field(ge=1, le=24 * 30)  # hours from NOW (bounded by max)
+    reason: str = Field(min_length=4)
 
 
 class DesiredStateRequest(BaseModel):
@@ -150,6 +159,7 @@ def create_agent_runtime(body: CreateRuntimeRequest, ident: ServiceIdentity = De
             harness=body.harness, runtime_class=body.runtime_class, site=body.site,
             model_route=body.model_route, bridge_profile=body.bridge_profile,
             desired_state=RuntimeState(body.desired_state),
+            sandbox_ttl_hours=body.sandbox_ttl_hours,
         )
         job, created = svc.submit(session, req, requested_by=ident.service, authority="sprint_execution_context")
         if created:
@@ -356,6 +366,35 @@ def reconcile_all(ident: ServiceIdentity = Depends(_auth("runtime:write"))):
             runtime_id=x.runtime_id, desired=x.desired, before=x.before,
             after=x.after, action=x.action, error=x.error, detail=x.detail,
         ).model_dump() for x in results], "count": len(results)}
+
+
+# ----------------------------------------------------------------- sandbox TTL (plan §26)
+@router.post("/agent-runtimes/{runtime_id}/extend-ttl")
+def extend_sandbox_ttl(runtime_id: str, body: ExtendTtlRequest,
+                       ident: ServiceIdentity = Depends(_auth("runtime:write"))):
+    """Extend a sandbox's TTL (hours from NOW). Bounded: sandbox class only,
+    capped at arm_sandbox_max_ttl_hours from now. Audited via RuntimeEvent."""
+    from datetime import datetime, timedelta, timezone
+
+    Session = get_session_factory("arm")
+    s = get_settings()
+    with Session() as session:
+        r = session.get(AgentRuntime, uuid.UUID(runtime_id))
+        if r is None:
+            raise HTTPException(status_code=404, detail="runtime not found")
+        if r.runtime_class != "sandbox":
+            raise HTTPException(status_code=422, detail="not a sandbox runtime")
+        hours = max(1, min(int(body.ttl_hours), s.arm_sandbox_max_ttl_hours))
+        new_exp = datetime.now(timezone.utc) + timedelta(hours=hours)
+        r.sandbox_expires_at = new_exp
+        r.ownership_meta = dict(r.ownership_meta or {})
+        r.ownership_meta["ttl_hours"] = hours
+        session.add(RuntimeEvent(actor=ident.service, action="sandbox_ttl_extended",
+                                 runtime_id=r.runtime_id, result="ok",
+                                 detail={"hours": hours, "reason": body.reason}))
+        session.commit()
+        return {"runtime_id": runtime_id, "sandbox_expires_at": new_exp.isoformat(),
+                "ttl_hours": hours}
 
 
 # ----------------------------------------------------------------- state sync
