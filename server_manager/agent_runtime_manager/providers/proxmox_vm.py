@@ -175,12 +175,16 @@ class ProxmoxVMProvider:
         self._call("POST", f"/nodes/{node}/qemu/{vmid}/status/stop", {}, timeout=120)
 
     def destroy(self, node: str, vmid: int, purge: bool = True, destroy_unreferenced: bool = True) -> None:
-        body: dict[str, Any] = {}
+        # LIVE-FOUND (W4.1 acceptance, 2026-10-02): PVE rejects a urlencoded
+        # FORM body on DELETE ("Unexpected content for method 'DELETE'") —
+        # DELETE params must travel as a QUERY STRING.
+        params: list[str] = []
         if purge:
-            body["purge"] = 1
+            params.append("purge=1")
         if destroy_unreferenced:
-            body["destroy-unreferenced-disks"] = 1
-        self._call("DELETE", f"/nodes/{node}/qemu/{vmid}", body or None, timeout=300)
+            params.append("destroy-unreferenced-disks=1")
+        qs = ("?" + "&".join(params)) if params else ""
+        self._call("DELETE", f"/nodes/{node}/qemu/{vmid}{qs}", None, timeout=300)
 
     # ------------------------------------------------------------- reads
     def vm_config(self, node: str, vmid: int) -> dict:
