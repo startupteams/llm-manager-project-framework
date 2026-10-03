@@ -30,6 +30,11 @@ MAX_WORKERS_PER_INFERENCE_NODE = 1
 # Worker classes that count against the inference-node cap
 INFERENCE_RUNTIME_CLASSES = frozenset({"inference", "inference_worker", "gpu"})
 
+# Classes that must clone from the node-local golden template (testthin on
+# miam00111) — they are pinned to the template node at placement time.
+# Live-found 2026-10-03 (DKMS): dkms_service needs this like sandbox does.
+TEMPLATE_PINNED_CLASSES = frozenset({"sandbox", "dkms_service"})
+
 
 @dataclass
 class PlacementDecision:
@@ -103,9 +108,14 @@ def select_node(
     # inactive on the placed node. Sandboxes (non-critical dev VMs) pin to the
     # TEMPLATE node — honest, safe, reversible; revisit when testthin is
     # active cluster-wide or the template is replicated.
-    if runtime_class == "sandbox":
+    #
+    # DKMS live-found 2026-10-03: the same constraint applies to any class
+    # whose clone source lives on the template node. TEMPLATE_PINNED_CLASSES
+    # lists every class that must clone from the node-local template —
+    # they pin to the template node instead of failing placement.
+    if runtime_class in TEMPLATE_PINNED_CLASSES:
         return PlacementDecision(node=template_node, score=100.0,
-                                 reasons=["sandbox_pinned_to_template_node"])
+                                 reasons=[f"{runtime_class}_pinned_to_template_node"])
 
     scored: list[PlacementDecision] = []
     for node in _candidate_nodes(session, provider):
