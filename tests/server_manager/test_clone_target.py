@@ -52,3 +52,19 @@ def test_sandbox_placement_pins_to_template_node(arm_session):
     assert not decision.rejected
     assert decision.node == "miam00111"
     assert "sandbox_pinned_to_template_node" in decision.reasons
+
+
+def test_dkms_service_placement_pins_to_template_node(arm_session):
+    # DKMS live-found 2026-10-03: dkms_service VMs clone from the node-local
+    # golden template (testthin on miam00111) — same constraint as sandboxes.
+    from server_manager.agent_runtime_manager.services.placement import select_node
+
+    class _FakeProvider:
+        def list_nodes(self):
+            return [("miam-00100", "online"), ("miam00111", "online")]
+
+    decision = select_node(arm_session, _FakeProvider(),
+                           runtime_class="dkms_service", template_node="miam00111")
+    assert not decision.rejected
+    assert decision.node == "miam00111"
+    assert "dkms_service_pinned_to_template_node" in decision.reasons
